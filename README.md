@@ -5,7 +5,7 @@ Application Streamlit pédagogique d'aide à la décision pour estimer le risque
 ## Contenu
 - `app.py` : dashboard Streamlit (contexte, dataset, notebook, EDA, corrélations, modèles/métriques, test réel vs prédit, prédiction/scénario)
 - `heart_disease_uci.csv` : jeu de données brut
-- `heart_disease_project.ipynb` : notebook du projet
+- `heart_disease_project_organized.ipynb` : notebook pédagogique organisé du projet
 - `assets/` : images et visuels
 - Livrables : rapport, fiches, exports CSV
 

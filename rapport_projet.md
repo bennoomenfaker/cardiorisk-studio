@@ -175,7 +175,7 @@ Les tableaux comparatifs, matrices de confusion, rapports de classification et c
 - **Critère recommandé :** bon compromis **F1** et **Rappel** (limiter les faux négatifs en dépistage) avec Accuracy/ROC-AUC satisfaisantes, en surpassant la baseline.
 - **Faux négatifs** (malades prédits « Non ») : erreur la plus critique ; **faux positifs** : fausses alertes.
 
-*(Voir sorties de `heart_disease_project.ipynb` — exécuté — et `resultats_modeles.csv`.)*
+*(Voir sorties de `heart_disease_project_organized.ipynb` — exécuté — et `resultats_modeles.csv`.)*
 
 ---
 
@@ -219,7 +219,7 @@ Le projet répond à la problématique par une démarche complète : compréhens
 
 ## 10. Livrables et exécution
 
-- **Notebook :** `heart_disease_project.ipynb` (exécutable de haut en bas, *Restart & Run All*, `random_state=42`, sorties régénérées).
+- **Notebook :** `heart_disease_project_organized.ipynb` (exécutable de haut en bas, *Restart & Run All*, `random_state=42`, sorties régénérées).
 - **Dashboard :** `app.py` (Streamlit) — indicateurs, graphiques, corrélations, comparaison modèles, scénario de prédiction (Oui/Non), probabilité, niveau de risque et alertes (aide à la décision).
 - **Rapport :** `rapport_projet.md` / `rapport_projet.pdf`.
 - **Données :** `heart_disease_uci.csv` (brut), `heart_disease_cleaned.csv` (nettoyé/préparé de base), `resultats_modeles.csv`, `exemples_reel_vs_predit.csv`.

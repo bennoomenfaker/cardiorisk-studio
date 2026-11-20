@@ -44,7 +44,6 @@ st.set_page_config(
 
 DATA_PATH = "heart_disease_uci.csv"
 NOTEBOOK_PATH = "heart_disease_project_organized.ipynb"
-NOTEBOOK_FALLBACK = "heart_disease_project.ipynb"
 ASSETS_DIR = Path("assets")
 RANDOM_STATE = 42
 
@@ -569,18 +568,12 @@ elif page == "Dataset":
 
 elif page == "Notebook (ipynb)":
     st.header("Notebook du projet (ipynb)")
-    st.write("Affichage du notebook du projet directement dans Streamlit (lecture seule), avec ses analyses, graphiques et résultats.")
+    st.write("Affichage du notebook organisé du projet directement dans Streamlit (lecture seule), avec ses analyses, graphiques et résultats.")
 
-    # Choix du notebook (organisé/pédagogique en priorité, fallback vers l'existant)
-    available = [p for p in [Path(NOTEBOOK_PATH), Path(NOTEBOOK_FALLBACK)] if p.exists()]
-    if not available:
-        st.error("Aucun notebook trouvé dans le dossier du projet.")
+    nb_path = Path(NOTEBOOK_PATH)
+    if not nb_path.exists():
+        st.error(f"Notebook introuvable : {NOTEBOOK_PATH}")
     else:
-        labels = [str(p) for p in available]
-        default_idx = 0  # organisé si présent
-        selected_label = st.selectbox("Notebook à afficher", labels, index=default_idx)
-        nb_path = Path(selected_label)
-
         c1, c2 = st.columns([1, 1])
         with c1:
             st.markdown(f"**Fichier affiché :** `{nb_path.name}`")
