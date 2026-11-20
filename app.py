@@ -209,7 +209,7 @@ def load_notebook(path: str):
 def render_notebook(nb):
     cells = nb.get("cells", [])
     st.caption(f"Notebook chargé : {len(cells)} cellules (affichage en lecture seule dans Streamlit).")
-    show_code = st.checkbox("Afficher le code des cellules", value=False)
+    show_code = st.checkbox("Afficher le code des cellules", value=True)
     show_outputs = st.checkbox("Afficher les sorties (outputs)", value=True)
     max_cells = st.slider("Nombre max de cellules à afficher", 10, len(cells), min(len(cells), 60), step=5)
     for i, cell in enumerate(cells[:max_cells]):
