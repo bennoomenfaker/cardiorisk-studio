@@ -43,7 +43,8 @@ st.set_page_config(
 )
 
 DATA_PATH = "heart_disease_uci.csv"
-NOTEBOOK_PATH = "heart_disease_project.ipynb"
+NOTEBOOK_PATH = "heart_disease_project_organized.ipynb"
+NOTEBOOK_FALLBACK = "heart_disease_project.ipynb"
 ASSETS_DIR = Path("assets")
 RANDOM_STATE = 42
 
@@ -568,30 +569,36 @@ elif page == "Dataset":
 
 elif page == "Notebook (ipynb)":
     st.header("Notebook du projet (ipynb)")
-    st.write("Affichage du notebook existant du projet directement dans Streamlit (lecture seule), avec ses analyses, graphiques et résultats.")
-    nb_path = Path(NOTEBOOK_PATH)
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        st.markdown(f"**Fichier :** `{NOTEBOOK_PATH}`")
-        if nb_path.exists():
+    st.write("Affichage du notebook du projet directement dans Streamlit (lecture seule), avec ses analyses, graphiques et résultats.")
+
+    # Choix du notebook (organisé/pédagogique en priorité, fallback vers l'existant)
+    available = [p for p in [Path(NOTEBOOK_PATH), Path(NOTEBOOK_FALLBACK)] if p.exists()]
+    if not available:
+        st.error("Aucun notebook trouvé dans le dossier du projet.")
+    else:
+        labels = [str(p) for p in available]
+        default_idx = 0  # organisé si présent
+        selected_label = st.selectbox("Notebook à afficher", labels, index=default_idx)
+        nb_path = Path(selected_label)
+
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.markdown(f"**Fichier affiché :** `{nb_path.name}`")
             st.download_button(
                 "Télécharger le notebook (.ipynb)",
                 data=nb_path.read_bytes(),
-                file_name=NOTEBOOK_PATH,
+                file_name=nb_path.name,
                 mime="application/x-ipynb+json",
             )
-    with c2:
-        st.markdown("**Options d’affichage**")
-        st.caption("Vous pouvez afficher/masquer le code et les sorties, et choisir le nombre de cellules à rendre.")
-    st.divider()
-    if nb_path.exists():
+        with c2:
+            st.markdown("**Options d’affichage**")
+            st.caption("Vous pouvez afficher/masquer le code et les sorties, et choisir le nombre de cellules à rendre.")
+        st.divider()
         try:
             nb = load_notebook(str(nb_path))
             render_notebook(nb)
         except Exception as e:
             st.error(f"Impossible de charger le notebook : {e}")
-    else:
-        st.error(f"Notebook introuvable : {NOTEBOOK_PATH}")
 
 elif page == "Processus ML & Qualité":
     st.header("Processus de Machine Learning, qualité des données et préparation")
@@ -1128,46 +1135,181 @@ elif page == "Test (réel vs prédit)":
 
 elif page == "Prédiction (scénario)":
     st.header("Prédiction pour un scénario patient (Oui/Non)")
-    st.write("Saisissez les caractéristiques cliniques : le modèle renvoie la classe prédite, la probabilité, un niveau de risque et une alerte (aide à la décision).")
+    st.write(
+        "Saisissez les caractéristiques cliniques : le modèle renvoie la classe prédite, "
+        "la probabilité, un niveau de risque et une alerte (aide à la décision)."
+    )
     show_target_explainer()
 
-    with st.expander("Aide : comprendre le jargon des variables"):
-        st.dataframe(pd.DataFrame(JARGON_GLOSSARY, columns=["Variable / Terme", "Explication simple"]), use_container_width=True, hide_index=True)
+    st.info(
+        "Important : les champs ci-dessous doivent être remplis avec les informations du patient lorsqu'elles sont connues. "
+        "Si une information ou un résultat d'examen n'est pas disponible, choisissez **« Non renseigné »** : "
+        "la valeur transmise au modèle sera **inconnue (NaN)** et le pipeline appliquera l'imputation apprise sur les données d'entraînement. "
+        "Une donnée inconnue n'est **pas** une mesure réelle (par exemple, « Non renseigné » pour *ca* ne signifie pas 0 vaisseau). "
+        "Les exemples indiqués servent uniquement à comprendre quoi saisir ; ils ne sont pas des données réelles du patient."
+    )
+
+    with st.expander("Aide : comprendre les catégories (langage simple)"):
+        st.markdown(
+            """
+            **cp — Type de douleur thoracique :**
+            - *typical angina* : douleur typique d'une angine.
+            - *atypical angina* : douleur avec certaines caractéristiques atypiques.
+            - *non-anginal* : douleur ne correspondant pas au profil classique de l'angine.
+            - *asymptomatic* : absence de symptôme de douleur rapporté.
+
+            **sex — Sexe :** sexe enregistré dans le dossier (*Male* / *Female*).
+
+            **fbs — Glycémie à jeun :** *Oui* = glycémie à jeun > 120 mg/dl (mesure biologique), *Non* = ≤ 120 mg/dl.
+
+            **restecg — ECG au repos :** *normal* = résultat normal ; *lv hypertrophy* = hypertrophie ventriculaire gauche ; *st-t abnormality* = anomalie du segment ST-T.
+
+            **exang — Angine à l'effort :** *Oui* = douleur thoracique (angine) provoquée par l'effort, *Non* = non.
+
+            **slope — Pente du segment ST (ECG d'effort) :** *upsloping* = pente montante, *flat* = pente plate, *downsloping* = pente descendante.
+
+            **thal — Résultat du test de perfusion :** *normal* = normal ; *fixed defect* = défaut fixe ; *reversable defect* = défaut réversible.
+            """
+        )
 
     ml_only = [m for m in results.keys() if m != "Baseline (classe majoritaire)"]
     default_pred_model = metrics_df.loc[ml_only, "F1"].idxmax() if ml_only else list(results.keys())[0]
     model_name = st.selectbox("Modèle utilisé", list(results.keys()), index=list(results.keys()).index(default_pred_model))
     pipe = results[model_name]["pipeline"]
 
+    def parse_optional_float(text_value, min_v=None, max_v=None):
+        """Convertit une saisie texte en nombre ou en NaN si vide/non renseigné."""
+        if text_value is None:
+            return np.nan, None
+        s = str(text_value).strip().replace(",", ".")
+        if s == "" or s.lower() in {"non renseigné", "non renseigne", "na", "nan", "none", "inconnu"}:
+            return np.nan, None
+        try:
+            v = float(s)
+        except Exception:
+            return "invalid", f"Valeur non numérique : '{text_value}'."
+        if min_v is not None and v < min_v:
+            return "invalid", f"Valeur trop petite (min {min_v})."
+        if max_v is not None and v > max_v:
+            return "invalid", f"Valeur trop grande (max {max_v})."
+        return v, None
+
+    NR = "Non renseigné"
+
     with st.form("pred_form"):
+        st.markdown("### Informations à saisir")
         c1, c2, c3 = st.columns(3)
+
         with c1:
-            age = st.number_input("Âge (années)", 28, 90, 54)
-            sex = st.selectbox("Sexe", ["Male", "Female"])
-            cp = st.selectbox("Douleur thoracique (cp)", ["typical angina", "atypical angina", "non-anginal", "asymptomatic"])
-            trestbps = st.number_input("Pression repos (trestbps, mm Hg)", 80, 220, 130)
-            chol = st.number_input("Cholestérol (chol, mg/dl)", 100, 600, 240)
+            st.markdown("**Âge (age)**")
+            st.caption("Âge du patient en années. Unité : années. Exemple : 54. Origine : dossier patient.")
+            age = st.number_input("Âge (années)", min_value=1, max_value=120, value=54, step=1, label_visibility="collapsed")
+
+            st.markdown("**Sexe (sex)**")
+            st.caption("Sexe enregistré dans le dossier. Catégories : Male / Female. Origine : dossier patient.")
+            sex = st.selectbox("Sexe", ["Male", "Female"], label_visibility="collapsed")
+
+            st.markdown("**Type de douleur thoracique (cp)**")
+            st.caption("Type de douleur ressentie. Catégories expliquées dans l'aide ci-dessus. Exemple : asymptomatic. Origine : symptômes / dossier patient.")
+            cp_choice = st.selectbox("Douleur thoracique (cp)", [NR, "typical angina", "atypical angina", "non-anginal", "asymptomatic"], index=0, label_visibility="collapsed")
+
+            st.markdown("**Pression artérielle au repos (trestbps)**")
+            st.caption("Pression mesurée au repos. Unité : mm Hg. Exemple : 130. Laisser vide si non renseigné. Origine : mesure médicale.")
+            trestbps_txt = st.text_input("Pression au repos (mm Hg)", value="", placeholder="Ex : 130 (laisser vide si non renseigné)", label_visibility="collapsed")
+
+            st.markdown("**Cholestérol (chol)**")
+            st.caption("Taux de cholestérol total. Unité : mg/dl. Exemple : 240. Laisser vide si non renseigné. Origine : analyse de sang.")
+            chol_txt = st.text_input("Cholestérol (mg/dl)", value="", placeholder="Ex : 240 (laisser vide si non renseigné)", label_visibility="collapsed")
+
         with c2:
-            fbs = st.selectbox("Glycémie à jeun > 120 mg/dl (fbs)", [False, True])
-            restecg = st.selectbox("ECG repos (restecg)", ["normal", "lv hypertrophy", "st-t abnormality"])
-            thalch = st.number_input("Fréquence cardiaque max (thalch)", 60, 220, 150)
-            exang = st.selectbox("Angine d'effort (exang)", [False, True])
+            st.markdown("**Glycémie à jeun (fbs)**")
+            st.caption("Glycémie à jeun > 120 mg/dl ? Oui/Non. Exemple : Non. Laisser « Non renseigné » si inconnu. Origine : analyse de sang à jeun.")
+            fbs_choice = st.selectbox("Glycémie à jeun > 120 mg/dl (fbs)", [NR, "Non (≤ 120 mg/dl)", "Oui (> 120 mg/dl)"], index=0, label_visibility="collapsed")
+
+            st.markdown("**ECG au repos (restecg)**")
+            st.caption("Résultat de l'électrocardiogramme au repos. Catégories : normal, lv hypertrophy, st-t abnormality. Origine : examen (ECG).")
+            restecg_choice = st.selectbox("ECG au repos (restecg)", [NR, "normal", "lv hypertrophy", "st-t abnormality"], index=0, label_visibility="collapsed")
+
+            st.markdown("**Fréquence cardiaque maximale (thalch)**")
+            st.caption("Fréquence maximale atteinte pendant un test d'effort. Unité : battements par minute (bpm). Exemple : 150. Laisser vide si non renseigné. Origine : test d'effort.")
+            thalch_txt = st.text_input("Fréquence cardiaque max (bpm)", value="", placeholder="Ex : 150 (laisser vide si non renseigné)", label_visibility="collapsed")
+
+            st.markdown("**Angine provoquée par l'effort (exang)**")
+            st.caption("Douleur thoracique (angine) provoquée par l'effort ? Oui/Non. Exemple : Non. Origine : test d'effort / dossier patient.")
+            exang_choice = st.selectbox("Angine d'effort (exang)", [NR, "Non", "Oui"], index=0, label_visibility="collapsed")
+
         with c3:
-            oldpeak = st.number_input("Oldpeak (dépression ST)", -2.5, 7.0, 1.0, step=0.1)
-            slope = st.selectbox("Pente ST (slope)", ["upsloping", "flat", "downsloping"])
-            ca = st.number_input("Nb vaisseaux colorés (ca)", 0.0, 3.0, 0.0, step=1.0)
-            thal = st.selectbox("Thalassémie/perfusion (thal)", ["normal", "fixed defect", "reversable defect"])
+            st.markdown("**Dépression ST (oldpeak)**")
+            st.caption("Variation du segment ST à l'effort par rapport au repos (ECG d'effort). Unité : valeur numérique (ex. mm). Exemple : 1.0. Laisser vide si non renseigné. Origine : examen (ECG d'effort).")
+            oldpeak_txt = st.text_input("Oldpeak (dépression ST)", value="", placeholder="Ex : 1.0 (laisser vide si non renseigné)", label_visibility="collapsed")
+
+            st.markdown("**Pente du segment ST (slope)**")
+            st.caption("Forme de la pente du segment ST à l'effort. Catégories : upsloping, flat, downsloping. Origine : examen (ECG d'effort).")
+            slope_choice = st.selectbox("Pente ST (slope)", [NR, "upsloping", "flat", "downsloping"], index=0, label_visibility="collapsed")
+
+            st.markdown("**Nombre de vaisseaux majeurs (ca)**")
+            st.caption("Nombre de vaisseaux majeurs (0 à 3) observés par fluoroscopie. Exemple : 0. Laisser vide si non renseigné (ne pas mettre 0 par défaut si l'examen n'a pas été fait). Origine : examen spécialisé (fluoroscopie).")
+            ca_choice = st.selectbox("Nombre de vaisseaux (ca)", [NR, "0", "1", "2", "3"], index=0, label_visibility="collapsed")
+
+            st.markdown("**Résultat du test de perfusion (thal)**")
+            st.caption("Résultat du test de perfusion/thallium. Catégories : normal, fixed defect, reversable defect. Origine : examen spécialisé.")
+            thal_choice = st.selectbox("Test thal (thal)", [NR, "normal", "fixed defect", "reversable defect"], index=0, label_visibility="collapsed")
+
+        st.caption(
+            "Rappel : les valeurs numériques/examens sont laissées vides par défaut (« Non renseigné ») pour ne pas inventer de données. "
+            "Les exemples indiqués dans les champs servent uniquement d'aide à la saisie : renseignez les valeurs connues du patient ou laissez « Non renseigné »."
+        )
         submitted = st.form_submit_button("Prédire (Oui/Non)")
 
     if submitted:
+        errors = []
+
+        # Conversions des champs optionnels (texte -> nombre ou NaN)
+        trestbps_val, err = parse_optional_float(trestbps_txt, 50, 260);  errors += [err] if err else []
+        chol_val, err = parse_optional_float(chol_txt, 50, 700);          errors += [err] if err else []
+        thalch_val, err = parse_optional_float(thalch_txt, 30, 250);      errors += [err] if err else []
+        oldpeak_val, err = parse_optional_float(oldpeak_txt, -5, 10);     errors += [err] if err else []
+
+        # Mappings catégories -> valeurs / NaN
+        cp_val = np.nan if cp_choice == NR else cp_choice
+        restecg_val = np.nan if restecg_choice == NR else restecg_choice
+        slope_val = np.nan if slope_choice == NR else slope_choice
+        thal_val = np.nan if thal_choice == NR else thal_choice
+
+        fbs_val = np.nan if fbs_choice == NR else (True if fbs_choice.startswith("Oui") else False)
+        exang_val = np.nan if exang_choice == NR else (True if exang_choice == "Oui" else False)
+
+        if ca_choice == NR:
+            ca_val = np.nan
+        else:
+            ca_val = float(ca_choice)
+
+        if errors:
+            for msg in errors:
+                st.error(msg)
+            st.stop()
+
+        # Construction de la ligne transmise au pipeline (NaN = inconnu)
         row = pd.DataFrame([{
-            "age": age, "sex": sex, "cp": cp, "trestbps": trestbps, "chol": chol,
-            "fbs": fbs, "restecg": restecg, "thalch": thalch, "exang": exang,
-            "oldpeak": oldpeak, "slope": slope, "ca": ca, "thal": thal,
+            "age": age,
+            "sex": sex,
+            "cp": cp_val,
+            "trestbps": trestbps_val,
+            "chol": chol_val,
+            "fbs": fbs_val,
+            "restecg": restecg_val,
+            "thalch": thalch_val,
+            "exang": exang_val,
+            "oldpeak": oldpeak_val,
+            "slope": slope_val,
+            "ca": ca_val,
+            "thal": thal_val,
         }])
+
         pred = pipe.predict(row)[0]
         proba = pipe.predict_proba(row)[0][1] if hasattr(pipe, "predict_proba") else float(pred)
 
+        # Seuils de présentation (non médicaux) pour l'aide à la décision
         if proba < 0.33:
             niveau_risque = "Faible"
         elif proba < 0.66:
@@ -1180,19 +1322,33 @@ elif page == "Prédiction (scénario)":
         c2.metric("Probabilité de maladie (Oui)", f"{proba:.2%}")
         c3.metric("Niveau de risque estimé", niveau_risque)
 
+        st.caption("Les niveaux de risque (< 33 %, 33–66 %, ≥ 66 %) sont des repères de présentation dans l'application, pas des seuils médicaux validés.")
+
         if pred == 1 or niveau_risque == "Élevé":
-            st.error(f"Alerte : risque **{niveau_risque.lower()}** — prédiction **{'Oui' if pred==1 else 'Non'}** ({proba:.2%}). Aide à la décision uniquement, **vérification humaine/médicale indispensable**.")
+            st.error(
+                f"Alerte : risque **{niveau_risque.lower()}** — prédiction **{'Oui' if pred==1 else 'Non'}** ({proba:.2%}). "
+                "Aide à la décision uniquement, **vérification humaine/médicale indispensable**."
+            )
             st.write("**Explication :** le profil se rapproche des cas avec maladie (« Oui ») observés à l'entraînement. Des examens et un avis médical sont nécessaires.")
         elif niveau_risque == "Modéré":
-            st.warning(f"Attention : risque **modéré** — prédiction **{'Oui' if pred==1 else 'Non'}** ({proba:.2%}). Aide à la décision ; évaluation clinique recommandée en cas de symptômes.")
+            st.warning(
+                f"Attention : risque **modéré** — prédiction **{'Oui' if pred==1 else 'Non'}** ({proba:.2%}). "
+                "Aide à la décision ; évaluation clinique recommandée en cas de symptômes."
+            )
             st.write("**Explication :** profil intermédiaire ; le modèle estime une probabilité moyenne, à interpréter avec prudence.")
         else:
-            st.success(f"Risque estimé **faible** — prédiction **{'Oui' if pred==1 else 'Non'}** ({proba:.2%}). Aide à la décision, pas un diagnostic.")
+            st.success(
+                f"Risque estimé **faible** — prédiction **{'Oui' if pred==1 else 'Non'}** ({proba:.2%}). "
+                "Aide à la décision, pas un diagnostic."
+            )
             st.write("**Explication :** profil plus proche des cas sans maladie (« Non ») ; en cas de symptômes, consulter reste nécessaire.")
 
-        st.markdown("**Récapitulatif du scénario saisi :**")
-        st.dataframe(row, use_container_width=True)
+        st.markdown("**Récapitulatif du scénario transmis au modèle :**")
+        display_row = row.copy()
+        st.dataframe(display_row, use_container_width=True)
+        st.caption("Les cellules vides/NaN correspondent aux informations « Non renseigné » : le pipeline les impute à partir des statistiques apprises sur l'entraînement (sans utiliser la cible).")
         st.info("Une alerte/prédiction automatique n'est qu'une aide à la décision : **vérification humaine** obligatoire.")
+
 
 elif page == "Interprétation & Éthique":
     st.header("Interprétation, limites, recommandations et éthique")
