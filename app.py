@@ -106,6 +106,7 @@ def process_figure():
         ("5  Pipeline & modèles", "imputation → encodage\n→ scaling → modèle"),
         ("6  Évaluation", "AUC, rappel,\nmatrice de confusion"),
         ("7  Seuil & déploiement", "seuil métier\n+ app Streamlit"),
+        ("8  Export", "model.joblib\nmodel_meta.json"),
     ]
     fig, ax = plt.subplots(figsize=(13, 2.8))
     ax.axis("off")
@@ -118,7 +119,7 @@ def process_figure():
         ax.text(x + 0.625, 0.62, sub, ha="center", va="center", fontsize=7.5)
         if i < len(steps) - 1:
             ax.annotate("", xy=(x + 1.42, 0.77), xytext=(x + 1.27, 0.77), arrowprops=dict(arrowstyle="->", lw=1.2))
-    ax.set_xlim(-0.1, 10.2)
+    ax.set_xlim(-0.1, 11.7)
     ax.set_ylim(0, 1.4)
     ax.set_title("Processus ML — CardioRisk Studio", fontsize=12, fontweight="bold")
     fig.tight_layout()
@@ -201,7 +202,12 @@ if page.startswith("1"):
 
     st.subheader("Contexte général")
     st.markdown("""
-Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les professionnels ont besoin d'outils d'aide au dépistage pour prioriser les patients à risque à partir de données cliniques et d'examens, **sans remplacer le diagnostic médical**.
+Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les professionnels ont besoin d'un outil d'aide au **dépistage** (repérage précoce/priorisation des patients à risque) pour orienter vers un examen médical.
+
+**Dépistage / pré-dépistage (définitions simples) :**
+- **Dépistage** : repérer tôt les personnes qui ont probablement un risque, pour les orienter vers des examens/avis médical.
+- **Pré-dépistage / triage** : étape encore plus en amont, rapide, pour prioriser qui doit être contrôlé en priorité.
+- **Ce projet** : prototype pédagogique de pré-dépistage/dépistage assisté par données. Il **ne pose pas de diagnostic médical** et ne remplace pas un médecin.
 
 **Domaine :** santé / aide à la décision / classification binaire.
 """)
@@ -215,14 +221,28 @@ Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les prof
 - **Q2.** Quelles variables contribuent le plus à la prédiction ?
 - **Q3.** Quelle est la capacité prédictive du modèle (AUC, rappel, métriques VIC) ?
 - **Q4.** Quel modèle choisir (baseline, régression logistique, arbre, KNN, Random Forest) ?
-- **Q5.** Le modèle est-il fiable pour le dépistage ? Quel seuil choisir pour limiter les malades manqués ?
+- **Q5.** Le modèle est-il fiable pour le pré-dépistage ? Quel seuil de décision choisir pour limiter les malades manqués, et quel compromis accepter ?
+""")
+
+    st.subheader("Définitions simples (jargon)")
+    st.markdown("""
+| Terme | Définition simple |
+|---|---|
+| **Dépistage** | Repérer tôt les personnes potentiellement à risque pour les orienter vers un médecin/examen. |
+| **Pré-dépistage / triage** | Filtre rapide en amont pour prioriser les personnes à contrôler. Ce n'est pas un diagnostic. |
+| **Diagnostic** | Décision médicale faite par un professionnel avec examens cliniques. Le modèle ne fait pas ça. |
+| **Probabilité** | Score entre 0% et 100% estimé par le modèle : plus c'est élevé, plus le profil ressemble aux cas malades vus à l'entraînement. |
+| **Seuil de décision** | Règle de conversion probabilité → classe. Ex: si probabilité ≥ seuil alors "risque élevé". Le seuil est calculé, pas arbitraire. |
+| **Faux négatif** | Malade prédit sain — dangereux en dépistage. |
+| **Faux positif** | Sain prédit malade — fausse alerte, entraîne un contrôle supplémentaire. |
+| **Recall/Rappel** | % de vrais malades détectés. Prioritaire ici. |
 """)
 
     st.subheader("Processus ML (image)")
     fig_proc = process_figure()
     st.pyplot(fig_proc)
     plt.close(fig_proc)
-    st.caption("Schéma du processus : données brutes → audit/nettoyage → EDA → split → pipeline/modèles → évaluation → seuil/déploiement.")
+    st.caption("Schéma du processus : données brutes → audit/nettoyage → EDA → split → pipeline/modèles → évaluation → seuil → export (joblib/json) → app Streamlit.")
 
     st.subheader("Description des variables")
     var_rows = []
@@ -238,8 +258,11 @@ Dans ce projet, la sortie du modèle est une **probabilité estimée** de maladi
 
 - **Données passées au modèle** : les variables du formulaire (âge, pression, cholestérol, ECG, douleur thoracique, etc.) après le même prétraitement que l'entraînement.
 - **Le modèle calcule** `P(malade | données patient)`.
-- **Seuil de dépistage** : si `P >= seuil` (seuil optimisé, plus bas que 0.5) → **risque élevé / malade probable** ; sinon **risque faible**.
-- **Pourquoi un seuil plus bas ?** En dépistage, manquer un malade (faux négatif) est plus grave qu'une fausse alerte (faux positif). On privilégie donc le **rappel**.
+- **Seuil de décision** : règle pour transformer une probabilité en décision.
+  - Exemple par défaut : seuil 0.50 (50%). Mais ce n'est pas obligatoire.
+  - Dans notre cas, on choisit un seuil **plus bas que 0.50** (calculé sur validation croisée du train, puis appliqué au test) pour **attraper plus de vrais malades**.
+  - Conséquence : moins de malades manqués (**faux négatifs** ↓), mais plus de fausses alertes (**faux positifs** ↑). Ce compromis est acceptable en pré-dépistage, car une alerte peut mener à un contrôle médical.
+- **Pourquoi un seuil plus bas ?** En dépistage, manquer un malade (faux négatif) est plus grave qu'une fausse alerte (faux positif). On privilégie donc le **rappel** (sensibilité = part de malades détectés). La valeur exacte du seuil doit être **calculée et justifiée**, pas choisie au hasard.
 - **Verdict final** : toujours indicatif. **Validation humaine / avis médical obligatoire**.
 """)
 
@@ -287,6 +310,11 @@ elif page.startswith("2"):
 | NA important (`ca`) | `add_indicator=True` | Ajoute une colonne “valeur manquante” pour que le modèle distingue un vrai 0 d'un 0 imputé |
 
 **Anti-fuite** : tout `fit` (médiane, mode, scaler, encoder) est fait **sur le train uniquement** dans un `Pipeline`.
+""")
+    st.info("""
+**Export (fin du processus, pour l'app)**  
+Après entraînement/évaluation, on sauvegarde : `model.joblib` (pipeline complet) et `model_meta.json` (seuil calculé, bornes, catégories, citation).  
+Ainsi l'application Streamlit charge le modèle sauvegardé pour prédire, sans réentraîner.
 """)
 
     st.subheader("Étape 4 — Cible (target)")
@@ -336,11 +364,17 @@ elif page.startswith("2"):
 **Métriques classification (importantes ici) :**
 - **Accuracy** : % correct global. Peut tromper si déséquilibre.
 - **Precision** : parmi les prédits malades, combien sont vraiment malades.
-- **Recall (Rappel)** : parmi les vrais malades, combien sont détectés. **Le plus important dans notre cas de dépistage** car manquer un malade (faux négatif) est grave.
+- **Recall (Rappel / Sensibilité)** : parmi les vrais malades, combien sont détectés. **Le plus important dans notre cas de pré-dépistage** car manquer un malade (faux négatif) est grave.
 - **F1** : compromis précision/rappel.
 - **AUC** : capacité à séparer sain/malade sur tous les seuils (0.5 hasard, 1 parfait).
 
-**Pourquoi Recall prioritaire ?** En santé/dépistage, un faux négatif = malade non détecté. On accepte plus de fausses alertes pour réduire les malades manqués (ajustement du seuil).
+**Pourquoi Recall prioritaire ?** En pré-dépistage, un faux négatif = malade non détecté. On accepte plus de fausses alertes pour réduire les malades manqués (ajustement du seuil).
+
+**Étape 8 — Export pour l'application (joblib/json)**
+- **Pourquoi exporter ?** Pour que l'app Streamlit utilise le modèle entraîné sans réentraîner à chaque clic.
+- **`model.joblib`** : contient le pipeline entraîné (prétraitement + modèle).
+- **`model_meta.json`** : contient les métadonnées nécessaires au formulaire et à la décision (seuil calculé, bornes min/max/médiane, catégories, citation source).
+- **Important** : le seuil sauvegardé doit provenir de l'évaluation (validation croisée/train), pas être écrit à la main.
 """)
 
 # -------------------- PAGE 3 --------------------
@@ -386,7 +420,7 @@ elif page.startswith("3"):
             rows.append({
                 "Modèle": name,
                 "Probabilité malade %": round(prob * 100, 2),
-                "Seuil %": round(seuil * 100, 2),
+                "Seuil décision %": round(seuil * 100, 2),
                 "Prédiction": "Malade (1)" if pred_i else "Sain (0)",
                 "Verdict": "⚠️ Risque élevé" if pred_i else "✅ Risque faible",
             })
@@ -397,9 +431,9 @@ elif page.startswith("3"):
         verdict = "MALADE / RISQUE ÉLEVÉ" if main_p >= seuil else "SAIN / RISQUE FAIBLE"
         st.markdown("### Verdict final")
         if main_p >= seuil:
-            st.error(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} ≥ seuil {seuil:.1%}. Recommandation : avis médical / examens complémentaires.")
+            st.error(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} ≥ seuil {seuil:.1%} (seuil calculé pour favoriser le rappel/pré-dépistage). Recommandation : avis médical / examens complémentaires.")
         else:
-            st.success(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} < seuil {seuil:.1%}. Pas d'alerte modèle, rester vigilant si symptômes.")
+            st.success(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} < seuil {seuil:.1%}. Pas d'alerte modèle au seuil choisi, mais rester vigilant si symptômes.")
 
         st.markdown("### Pourquoi ce verdict ? (logique)")
         reasons = []
