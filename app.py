@@ -160,17 +160,66 @@ elif page == "Prédiction":
 
     if envoyer:
         X = pd.DataFrame([patient])
-        p = float(model.predict_proba(X)[0, 1])
         seuil = float(meta["seuil"])
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Probabilité estimée", f"{p:.1%}")
+        st.markdown("### Résultat — comparaison 3 modèles (mêmes données formulaire)")
+        # Train 3 models on demand for comparison using same data schema as notebook
+        @st.cache_resource
+        def train_compare_models():
+            from sklearn.compose import ColumnTransformer
+            from sklearn.impute import SimpleImputer
+            from sklearn.pipeline import Pipeline
+            from sklearn.preprocessing import OneHotEncoder, StandardScaler
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.ensemble import RandomForestClassifier
+            from sklearn.neighbors import KNeighborsClassifier
+            from sklearn.model_selection import train_test_split
+            df_all = pd.read_csv(DATA_PATH)
+            df_all.loc[df_all["chol"]==0,"chol"] = pd.NA
+            df_all.loc[df_all["trestbps"]==0,"trestbps"] = pd.NA
+            df_all["target"] = (df_all["num"]>0).astype(int)
+            NUM = ["age","trestbps","chol","thalch","oldpeak","ca"]
+            CAT = ["sex","cp","fbs","restecg","exang","slope","thal"]
+            for c in CAT: df_all[c]=df_all[c].astype(str).where(df_all[c].notna(), pd.NA)
+            Xall=df_all[NUM+CAT]; yall=df_all["target"]
+            Xtr,Xte,ytr,yte=train_test_split(Xall,yall,test_size=0.2,stratify=yall,random_state=42)
+            pre = ColumnTransformer([
+                ("num", Pipeline([("imp",SimpleImputer(strategy="median",add_indicator=True)),("sc",StandardScaler())]), NUM),
+                ("cat", Pipeline([("imp",SimpleImputer(strategy="most_frequent")),("oh",OneHotEncoder(handle_unknown="ignore"))]), CAT),
+            ], remainder="drop")
+            defs = {
+                "Régression logistique": LogisticRegression(max_iter=2000),
+                "Random Forest": RandomForestClassifier(n_estimators=300,min_samples_leaf=3,random_state=42),
+                "KNN": KNeighborsClassifier(n_neighbors=7),
+            }
+            fitted={}
+            for n,m in defs.items():
+                pipe=Pipeline([("pre",pre),("model",m)])
+                pipe.fit(Xtr,ytr)
+                fitted[n]=pipe
+            return fitted
+        try:
+            models3 = train_compare_models()
+            rows=[]
+            for name,m in models3.items():
+                prob=float(m.predict_proba(X)[0,1])
+                pred_i=int(prob>=seuil)
+                rows.append({"Modèle":name,"Probabilité_%":round(prob*100,2),"Seuil_%":round(seuil*100,2),"Prédiction":"Malade (1)" if pred_i else "Sain (0)","Décision":"Au-dessus seuil" if pred_i else "Sous seuil"})
+            res=pd.DataFrame(rows)
+            st.dataframe(res, use_container_width=True)
+            st.caption("Les 3 modèles reçoivent exactement les mêmes données saisies dans le formulaire. Comparer les probabilités/décisions aide à voir la robustesse.")
+            main_p = float(models3["Régression logistique"].predict_proba(X)[0,1])
+        except Exception as e:
+            st.warning(f"Comparaison 3 modèles indisponible: {e}")
+            main_p = float(model.predict_proba(X)[0,1])
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Probabilité (modèle retenu)", f"{main_p:.1%}")
         c2.metric("Seuil de dépistage", f"{seuil:.1%}")
-        c3.metric("Décision", "Risque élevé" if p >= seuil else "Risque faible")
-        if p >= seuil:
+        c3.metric("Décision", "Risque élevé" if main_p>=seuil else "Risque faible")
+        if main_p >= seuil:
             st.error("Au-dessus du seuil de dépistage : recommander un avis médical / examens complémentaires.")
         else:
             st.success("En dessous du seuil : pas d’alerte modèle, mais rester vigilant si symptômes/facteurs de risque.")
-        st.progress(min(max(p, 0.0), 1.0))
+        st.progress(min(max(main_p, 0.0), 1.0))
         st.caption("Résultat indicatif issu d’un modèle pédagogique. Validation humaine obligatoire.")
 
     st.markdown("### Interprétation rapide")
