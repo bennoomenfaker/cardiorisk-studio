@@ -3,30 +3,43 @@ import json
 from pathlib import Path
 
 import joblib
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import seaborn as sns
 import streamlit as st
+from matplotlib.patches import FancyBboxPatch
 
 st.set_page_config(page_title="CardioRisk Studio", page_icon="🫀", layout="wide")
+sns.set_theme(style="whitegrid")
+
 ROOT = Path(__file__).parent
 MODEL_PATH = ROOT / "model.joblib"
 META_PATH = ROOT / "model_meta.json"
 DATA_PATH = ROOT / "heart_disease_uci.csv"
 NOTEBOOK_PRIORITY = ROOT / "heart_disease_cardiorisk.ipynb"
+GITHUB_URL = "https://github.com/bennoomenfaker/cardiorisk-studio"
+
+TEAM = [
+    "Faker BEN NOOMEN",
+    "Haythem BEN BOUBAKER",
+    "Mariem Dridi",
+]
 
 FIELD_INFO = {
-    "age": "Âge (années)",
-    "trestbps": "Pression artérielle au repos (mm Hg)",
-    "chol": "Cholestérol sérique (mg/dl)",
-    "thalch": "Fréquence cardiaque maximale atteinte",
-    "oldpeak": "Dépression ST à l'effort (oldpeak)",
-    "ca": "Nombre de vaisseaux majeurs colorés (0-3)",
-    "sex": "Sexe",
-    "cp": "Type de douleur thoracique",
-    "fbs": "Glycémie à jeun > 120 mg/dl",
-    "restecg": "ECG au repos",
-    "exang": "Angine induite par l'effort",
-    "slope": "Pente du segment ST à l'effort",
-    "thal": "Résultat thalassémie/scintigraphie",
+    "age": ("Âge (années)", "Âge du patient. Le risque cardiovasculaire augmente souvent avec l'âge, mais l'âge seul ne suffit pas."),
+    "trestbps": ("Pression artérielle au repos (mm Hg)", "Tension au repos. Valeurs très élevées augmentent le risque ; dans ce dataset, pouvoir discriminant modéré."),
+    "chol": ("Cholestérol sérique (mg/dl)", "Cholestérol total. Utile mais peut être bruité/manquant ; `chol==0` traité comme valeur invalide/manquante."),
+    "thalch": ("Fréquence cardiaque maximale atteinte", "Max heart rate à l'effort. Souvent plus bas chez les patients malades (moindre tolérance à l'effort)."),
+    "oldpeak": ("Dépression ST à l'effort (oldpeak)", "Mesure d'anomalie ECG à l'effort. Plus élevé = signal plus associé à la maladie."),
+    "ca": ("Nombre de vaisseaux majeurs colorés (0-3)", "Examen fluoroscopie. Variable forte mais très manquante ; on l'impute avec indicateur de manquant."),
+    "sex": ("Sexe", "Variable démographique/catégorielle. Dans ce dataset, les hommes ont un taux de maladie plus élevé."),
+    "cp": ("Type de douleur thoracique", "Symptôme clé. `asymptomatic` a un taux de maladie élevé dans ce dataset (maladie silencieuse possible)."),
+    "fbs": ("Glycémie à jeun > 120 mg/dl", "Indicateur glycémique. Signal faible seul, mais peut contribuer avec les autres."),
+    "restecg": ("ECG au repos", "Résultat électrocardiogramme au repos. Certaines anomalies augmentent le risque."),
+    "exang": ("Angine induite par l'effort", "Douleur à l'effort. Très informative : oui -> taux de maladie plus élevé."),
+    "slope": ("Pente du segment ST à l'effort", "Interprétation ECG effort. `flat`/`downsloping` plus associés à la maladie que `upsloping`."),
+    "thal": ("Thalassémie/scintigraphie", "Résultat examen. `reversable/fixed defect` associés à plus de maladie que `normal`, mais beaucoup de NA."),
 }
 
 
@@ -37,9 +50,9 @@ def load_model():
 
 @st.cache_data
 def load_data():
-    if DATA_PATH.exists():
-        return pd.read_csv(DATA_PATH)
-    return None
+    df = pd.read_csv(DATA_PATH)
+    df["target"] = (df["num"] > 0).astype(int)
+    return df
 
 
 def render_notebook(path: Path):
@@ -51,14 +64,14 @@ def render_notebook(path: Path):
     st.caption(f"{path.name} — {len(cells)} cellules")
     with open(path, "rb") as f:
         st.download_button("Télécharger le notebook (.ipynb)", f, file_name=path.name, mime="application/x-ipynb+json")
-    for cell in cells:
+    for i, cell in enumerate(cells):
         ctype = cell.get("cell_type")
         src = "".join(cell.get("source", []))
         if ctype == "markdown":
             st.markdown(src)
         elif ctype == "code":
-            if src.strip():
-                st.code(src, language="python")
+            st.markdown(f"**Code cellule {i+1}**")
+            st.code(src if src.strip() else "# (cellule vide)", language="python")
             for out in cell.get("outputs", []):
                 otype = out.get("output_type")
                 data = out.get("data", {})
@@ -79,6 +92,87 @@ def render_notebook(path: Path):
                             st.text(txt)
                 elif otype == "error":
                     st.error("\n".join(out.get("traceback", [])) or out.get("evalue", "Erreur"))
+        else:
+            st.info(f"Cellule {ctype} non affichée")
+
+
+@st.cache_data
+def process_figure():
+    steps = [
+        ("1  Données brutes", "CSV UCI / Kaggle"),
+        ("2  Audit & nettoyage", "NaN, zéros invalides,\ncible binaire"),
+        ("3  Exploration (EDA)", "distributions,\ncorrélations"),
+        ("4  Split train / test", "80 % / 20 %\nstratifié"),
+        ("5  Pipeline & modèles", "imputation → encodage\n→ scaling → modèle"),
+        ("6  Évaluation", "AUC, rappel,\nmatrice de confusion"),
+        ("7  Seuil & déploiement", "seuil métier\n+ app Streamlit"),
+    ]
+    fig, ax = plt.subplots(figsize=(13, 2.8))
+    ax.axis("off")
+    for i, (title, sub) in enumerate(steps):
+        x = i * 1.45
+        rect = FancyBboxPatch((x, 0.35), 1.25, 0.85, boxstyle="round,pad=0.02,rounding_size=0.08",
+                              linewidth=1.2, edgecolor="#2c3e50", facecolor="#ecf0f1")
+        ax.add_patch(rect)
+        ax.text(x + 0.625, 0.95, title, ha="center", va="center", fontsize=8.5, fontweight="bold")
+        ax.text(x + 0.625, 0.62, sub, ha="center", va="center", fontsize=7.5)
+        if i < len(steps) - 1:
+            ax.annotate("", xy=(x + 1.42, 0.77), xytext=(x + 1.27, 0.77), arrowprops=dict(arrowstyle="->", lw=1.2))
+    ax.set_xlim(-0.1, 10.2)
+    ax.set_ylim(0, 1.4)
+    ax.set_title("Processus ML — CardioRisk Studio", fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    return fig
+
+
+@st.cache_data
+def correlation_figure(df: pd.DataFrame):
+    cols = ["age", "trestbps", "chol", "thalch", "oldpeak", "ca", "target"]
+    corr = df[cols].corr(numeric_only=True)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", center=0, ax=ax)
+    ax.set_title("Matrice de corrélation (variables numériques + cible)")
+    fig.tight_layout()
+    return fig, corr
+
+
+@st.cache_resource
+def train_compare_models():
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.model_selection import train_test_split
+
+    df_all = pd.read_csv(DATA_PATH)
+    df_all.loc[df_all["chol"] == 0, "chol"] = np.nan
+    df_all.loc[df_all["trestbps"] == 0, "trestbps"] = np.nan
+    df_all["target"] = (df_all["num"] > 0).astype(int)
+    NUM = ["age", "trestbps", "chol", "thalch", "oldpeak", "ca"]
+    CAT = ["sex", "cp", "fbs", "restecg", "exang", "slope", "thal"]
+    for c in CAT:
+        df_all[c] = df_all[c].astype(str).where(df_all[c].notna(), np.nan)
+    Xall = df_all[NUM + CAT]
+    yall = df_all["target"]
+    Xtr, _, ytr, _ = train_test_split(Xall, yall, test_size=0.2, stratify=yall, random_state=42)
+    pre = ColumnTransformer([
+        ("num", Pipeline([("imp", SimpleImputer(strategy="median", add_indicator=True)), ("sc", StandardScaler())]), NUM),
+        ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("oh", OneHotEncoder(handle_unknown="ignore"))]), CAT),
+    ])
+    defs = {
+        "Régression logistique": LogisticRegression(max_iter=2000),
+        "Random Forest": RandomForestClassifier(n_estimators=300, min_samples_leaf=3, random_state=42),
+        "KNN": KNeighborsClassifier(n_neighbors=7),
+    }
+    fitted = {}
+    for n, m in defs.items():
+        pipe = Pipeline([("pre", pre), ("model", m)])
+        pipe.fit(Xtr, ytr)
+        fitted[n] = pipe
+    return fitted
 
 
 model, meta = load_model()
@@ -86,151 +180,253 @@ df = load_data()
 
 st.title("🫀 CardioRisk Studio")
 st.caption("Prototype pédagogique d’aide à la décision — Heart Disease UCI")
+st.markdown(f"**GitHub :** [{GITHUB_URL}]({GITHUB_URL})")
+st.markdown("**Équipe :** " + " • ".join(TEAM))
 
-page = st.sidebar.radio("Navigation", ["Contexte & EDA", "Prédiction", "Notebook (prioritaire)"], index=0)
+page = st.sidebar.radio(
+    "Navigation",
+    [
+        "1. Contexte & Problématique",
+        "2. Processus ML (pas à pas)",
+        "3. Prédiction / Verdict",
+        "4. Notebook (prioritaire)",
+    ],
+)
 st.sidebar.markdown("---")
 st.sidebar.info("Outil pédagogique. Ne remplace pas un avis médical.")
 
-if page == "Contexte & EDA":
-    st.subheader("Contexte du projet")
+# -------------------- PAGE 1 --------------------
+if page.startswith("1"):
+    st.header("1) Contexte, problématique et variables")
+
+    st.subheader("Contexte général")
     st.markdown("""
-**Problématique** : Peut-on prédire la présence d’une maladie cardiaque à partir de données cliniques et d’examens ?
+Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les professionnels ont besoin d'outils d'aide au dépistage pour prioriser les patients à risque à partir de données cliniques et d'examens, **sans remplacer le diagnostic médical**.
 
-**Cible** : `target = 1` si `num > 0` (sténose > 50%), sinon `0`.
-
-**Pipeline** : audit/nettoyage → EDA/corrélation → split stratifié 80/20 → pipeline anti-fuite (`SimpleImputer` + `add_indicator` + `StandardScaler` + `OneHotEncoder`) → comparaison modèles → évaluation + seuil de dépistage.
-
-**Limites** : valeurs manquantes importantes (`ca`, `thal`, `slope`), données multi-centres historiques, outil pédagogique, validation humaine obligatoire.
+**Domaine :** santé / aide à la décision / classification binaire.
 """)
-    if df is not None:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Observations", df.shape[0])
-        c2.metric("Colonnes", df.shape[1])
-        target = (df["num"] > 0).astype(int)
-        c3.metric("% malades", f"{target.mean():.1%}")
-        c4.metric("Seuil dépistage", f"{float(meta['seuil']):.0%}")
 
-        st.markdown("### Aperçu des données")
-        st.dataframe(df.head(), use_container_width=True)
+    st.subheader("Problématique")
+    st.info("**Peut-on prédire la présence d’une maladie cardiaque à partir de données cliniques et d’examens, de manière fiable et explicable ?**")
 
-        st.markdown("### Qualité / valeurs manquantes")
-        miss = df.isna().sum().sort_values(ascending=False)
-        miss = miss[miss > 0]
-        if not miss.empty:
-            st.bar_chart(miss)
-        st.caption("Les zéros invalides `chol==0` et `trestbps==0` sont traités comme manquants dans le pipeline du notebook.")
+    st.subheader("Questions de recherche")
+    st.markdown("""
+- **Q1.** Quels facteurs cliniques/examens sont associés à la maladie ?
+- **Q2.** Quelles variables contribuent le plus à la prédiction ?
+- **Q3.** Quelle est la capacité prédictive du modèle (AUC, rappel, métriques VIC) ?
+- **Q4.** Quel modèle choisir (baseline, régression logistique, arbre, KNN, Random Forest) ?
+- **Q5.** Le modèle est-il fiable pour le dépistage ? Quel seuil choisir pour limiter les malades manqués ?
+""")
 
-        st.markdown("### Distribution cible")
-        dist = pd.DataFrame({"classe": ["Sain (0)", "Malade (1)"], "count": [(target==0).sum(), (target==1).sum()]})
-        st.bar_chart(dist.set_index("classe"))
+    st.subheader("Processus ML (image)")
+    fig_proc = process_figure()
+    st.pyplot(fig_proc)
+    plt.close(fig_proc)
+    st.caption("Schéma du processus : données brutes → audit/nettoyage → EDA → split → pipeline/modèles → évaluation → seuil/déploiement.")
 
-        st.markdown("### Corrélations numériques (exploratoire)")
-        num_cols = [c for c in df.select_dtypes(include="number").columns if c not in ["id"]]
-        corr = df[num_cols].corr(numeric_only=True)
-        st.dataframe(corr.style.background_gradient(cmap="RdBu_r", axis=None), use_container_width=True)
-        st.caption("Corrélation = association linéaire, pas causalité. L’interprétation détaillée est dans le notebook prioritaire.")
-    st.info("Pour les explications figure par figure, ouvrir l’onglet **Notebook (prioritaire)**.")
+    st.subheader("Description des variables")
+    var_rows = []
+    for col, (label, meaning) in FIELD_INFO.items():
+        kind = "Numérique" if col in meta["num"] else "Catégorielle"
+        var_rows.append({"Variable": col, "Nom lisible": label, "Type": kind, "Description / utilité": meaning})
+    var_rows.append({"Variable": "num / target", "Nom lisible": "Diagnostic cible", "Type": "Cible", "Description / utilité": "`num` 0-4 dans le dataset brut. On crée `target=1` si `num>0` (maladie), sinon `0` (sain)."})
+    st.dataframe(pd.DataFrame(var_rows), use_container_width=True, hide_index=True)
 
-elif page == "Prédiction":
-    st.subheader("Estimation du risque")
-    st.write("Renseigner les informations patient. Les champs utilisent les plages/valeurs du modèle entraîné.")
+    st.subheader("Logique : quand dit-on qu'une personne est malade ?")
+    st.markdown("""
+Dans ce projet, la sortie du modèle est une **probabilité estimée** de maladie (`target=1`).
+
+- **Données passées au modèle** : les variables du formulaire (âge, pression, cholestérol, ECG, douleur thoracique, etc.) après le même prétraitement que l'entraînement.
+- **Le modèle calcule** `P(malade | données patient)`.
+- **Seuil de dépistage** : si `P >= seuil` (seuil optimisé, plus bas que 0.5) → **risque élevé / malade probable** ; sinon **risque faible**.
+- **Pourquoi un seuil plus bas ?** En dépistage, manquer un malade (faux négatif) est plus grave qu'une fausse alerte (faux positif). On privilégie donc le **rappel**.
+- **Verdict final** : toujours indicatif. **Validation humaine / avis médical obligatoire**.
+""")
+
+# -------------------- PAGE 2 --------------------
+elif page.startswith("2"):
+    st.header("2) Processus ML — pas à pas (explications)")
+
+    st.subheader("Étape 1 — Lecture des fichiers / compréhension")
+    st.markdown("""
+- **Action** : charger `heart_disease_uci.csv`, afficher `head`, `shape`, `info`, `describe`.
+- **Utilité** : comprendre la structure, les types, les plages de valeurs, et détecter anomalies.
+- **Observation dataset** : 920 observations, 16 colonnes brutes, 5 centres.
+""")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Observations", df.shape[0])
+    c2.metric("Colonnes brutes", 16)
+    c3.metric("Sains (0)", int((df["target"] == 0).sum()))
+    c4.metric("Malades (1)", int((df["target"] == 1).sum()))
+    st.dataframe(df.head(), use_container_width=True)
+
+    st.subheader("Étape 2 — Détection qualité : NA, doublons, types")
+    st.markdown("""
+- **Valeurs manquantes** : `ca`, `thal`, `slope` très incomplètes ; `chol`, `fbs`, `oldpeak`, `trestbps`, `thalch`, `exang` partiellement.
+- **Doublons** : à vérifier avec `df.duplicated().sum()`.
+- **Zéros invalides** : `chol==0` et `trestbps==0` sont médicalement impossibles → convertis en NaN.
+- **Variables catégorielles** : `sex, cp, fbs, restecg, exang, slope, thal` (texte/catégories).
+- **Variables numériques** : `age, trestbps, chol, thalch, oldpeak, ca`.
+""")
+    miss = df.isna().sum().sort_values(ascending=False)
+    miss = miss[miss > 0]
+    st.bar_chart(miss)
+    st.caption("Barres = nombre de valeurs manquantes par colonne. Plus la barre est longue, plus il faut une stratégie d'imputation prudente.")
+
+    st.subheader("Étape 3 — Data preparation / cleaning / preprocessing")
+    st.markdown("""
+**Pourquoi nettoyer/préparer ?** Les modèles ne gèrent pas bien les NaN, les échelles différentes, ni le texte brut.
+
+| Problème | Traitement | Pourquoi |
+|---|---|---|
+| `chol==0`, `trestbps==0` | Remplacer par NaN | Valeur impossible, ce n'est pas une vraie mesure |
+| NA numériques | **Médiane** (`SimpleImputer(strategy='median')`) | Robuste aux valeurs extrêmes/outliers ; la moyenne serait tirée par les valeurs extrêmes |
+| NA catégorielles | **Mode** (`most_frequent`) | Pour une catégorie, la valeur la plus fréquente est le remplacement simple ; on ne peut pas faire de moyenne sur du texte |
+| Catégorielles | **OneHotEncoder** | Transformer texte en colonnes 0/1 sans ordre artificiel |
+| Numériques | **StandardScaler** | Mettre à la même échelle (moyenne 0, écart-type 1), important pour KNN/régression logistique |
+| NA important (`ca`) | `add_indicator=True` | Ajoute une colonne “valeur manquante” pour que le modèle distingue un vrai 0 d'un 0 imputé |
+
+**Anti-fuite** : tout `fit` (médiane, mode, scaler, encoder) est fait **sur le train uniquement** dans un `Pipeline`.
+""")
+
+    st.subheader("Étape 4 — Cible (target)")
+    st.markdown("""
+- `num` = 0..4 (gravité). Pour classification binaire : **`target = 1` si `num > 0` sinon `0`**.
+- **Pourquoi ?** Simplifie en dépistage : malade / non malade. Les classes sont assez équilibrées (~55% / 45%).
+""")
+
+    st.subheader("Étape 5 — Étude de corrélation")
+    st.markdown("""
+**Pourquoi ?** Mesurer le lien linéaire entre variables numériques et cible, détecter redondance, orienter l'interprétation.
+
+**Comment lire la heatmap :**
+- Valeur entre **-1 et +1**.
+- **+1** : les deux variables augmentent ensemble.
+- **-1** : quand l'une augmente, l'autre baisse.
+- **0** : pas de relation linéaire claire.
+- **Diagonale = 1** : corrélation d'une variable avec elle-même.
+- Règle pratique : |r| < 0.3 faible, 0.3-0.7 modérée, >0.7 forte.
+
+**Attention :** corrélation ≠ causalité ; ne capte que le linéaire.
+""")
+    fig_corr, corr = correlation_figure(df)
+    st.pyplot(fig_corr)
+    plt.close(fig_corr)
+    tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
+    st.write("Corrélation avec la cible (triée par importance absolue):")
+    st.dataframe(tc.rename("corr_avec_target").to_frame(), use_container_width=True)
+    st.info("Interprétation : `ca`, `oldpeak` positifs ; `thalch` négatif ; `chol`/`trestbps` faibles. `ca` est calculé sur peu de valeurs (beaucoup de NA).")
+
+    st.subheader("Étape 6 — Features, split, modèles")
+    st.markdown("""
+- **Features** : variables numériques + catégorielles (sauf `id`, `dataset`, `num`, `target`).
+- **Split** : 80% train / 20% test, `stratify=y`, `random_state=42`.
+- **Pourquoi stratify ?** garder la même proportion malades/sains.
+- **Modèles comparés** : Baseline, Régression logistique, Arbre, KNN, Random Forest.
+- **Random Forest (pourquoi/arguments)** : ensemble d'arbres qui votent, capture non-linéarités/interactions, robuste. Ex. `n_estimators=300` (300 arbres), `min_samples_leaf=3` (évite feuilles trop petites/sur-apprentissage), `random_state=42` (reproductible).
+""")
+
+    st.subheader("Étape 7 — Évaluation : R², MAE, MSE, Recall etc.")
+    st.markdown("""
+**Métriques demandées VIC :**
+- **R² (coefficient de détermination)** : 1 - SS_res/SS_tot. 1 parfait, 0 = modèle naïf (moyenne), <0 pire. En classification, on le rapporte sur probabilité et on l'explique avec prudence.
+- **MAE (Mean Absolute Error)** : moyenne des |erreur|. Plus bas = mieux. Facile à lire : erreur moyenne.
+- **MSE (Mean Squared Error)** : moyenne des erreurs². Pénalise fortement les grosses erreurs.
+
+**Métriques classification (importantes ici) :**
+- **Accuracy** : % correct global. Peut tromper si déséquilibre.
+- **Precision** : parmi les prédits malades, combien sont vraiment malades.
+- **Recall (Rappel)** : parmi les vrais malades, combien sont détectés. **Le plus important dans notre cas de dépistage** car manquer un malade (faux négatif) est grave.
+- **F1** : compromis précision/rappel.
+- **AUC** : capacité à séparer sain/malade sur tous les seuils (0.5 hasard, 1 parfait).
+
+**Pourquoi Recall prioritaire ?** En santé/dépistage, un faux négatif = malade non détecté. On accepte plus de fausses alertes pour réduire les malades manqués (ajustement du seuil).
+""")
+
+# -------------------- PAGE 3 --------------------
+elif page.startswith("3"):
+    st.header("3) Prédiction / Verdict final (formulaire)")
+    st.markdown("Saisir les données patient. Les 3 modèles comparent la même entrée.")
+
     patient = {}
-    with st.form("formulaire"):
+    with st.form("formulaire_prediction"):
         colA, colB = st.columns(2)
         num_items = list(meta["num"].items())
         half = (len(num_items) + 1) // 2
         with colA:
             st.markdown("#### Mesures numériques")
             for col, s in num_items[:half]:
-                label = FIELD_INFO.get(col, col)
-                patient[col] = st.number_input(label, min_value=float(s["min"]), max_value=float(s["max"]), value=float(s["median"]), key=f"n_{col}")
+                label, desc = FIELD_INFO.get(col, (col, ""))
+                patient[col] = st.number_input(label, min_value=float(s["min"]), max_value=float(s["max"]), value=float(s["median"]), key=f"n_{col}", help=desc)
         with colB:
             st.markdown("#### Mesures numériques (suite)")
             for col, s in num_items[half:]:
-                label = FIELD_INFO.get(col, col)
-                patient[col] = st.number_input(label, min_value=float(s["min"]), max_value=float(s["max"]), value=float(s["median"]), key=f"n_{col}")
+                label, desc = FIELD_INFO.get(col, (col, ""))
+                patient[col] = st.number_input(label, min_value=float(s["min"]), max_value=float(s["max"]), value=float(s["median"]), key=f"n_{col}", help=desc)
         st.markdown("#### Variables catégorielles")
         cat_cols = st.columns(2)
         for i, (col, options) in enumerate(meta["cat"].items()):
             opts = [o for o in options if o is not None]
-            label = FIELD_INFO.get(col, col)
+            label, desc = FIELD_INFO.get(col, (col, ""))
             with cat_cols[i % 2]:
-                patient[col] = st.selectbox(label, opts, index=0, key=f"c_{col}")
-        envoyer = st.form_submit_button("Estimer le risque", use_container_width=True)
+                patient[col] = st.selectbox(label, opts, index=0, key=f"c_{col}", help=desc)
+        envoyer = st.form_submit_button("Prédire / Comparer les 3 modèles", use_container_width=True)
 
     if envoyer:
         X = pd.DataFrame([patient])
         seuil = float(meta["seuil"])
-        st.markdown("### Résultat — comparaison 3 modèles (mêmes données formulaire)")
-        # Train 3 models on demand for comparison using same data schema as notebook
-        @st.cache_resource
-        def train_compare_models():
-            from sklearn.compose import ColumnTransformer
-            from sklearn.impute import SimpleImputer
-            from sklearn.pipeline import Pipeline
-            from sklearn.preprocessing import OneHotEncoder, StandardScaler
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.ensemble import RandomForestClassifier
-            from sklearn.neighbors import KNeighborsClassifier
-            from sklearn.model_selection import train_test_split
-            df_all = pd.read_csv(DATA_PATH)
-            df_all.loc[df_all["chol"]==0,"chol"] = pd.NA
-            df_all.loc[df_all["trestbps"]==0,"trestbps"] = pd.NA
-            df_all["target"] = (df_all["num"]>0).astype(int)
-            NUM = ["age","trestbps","chol","thalch","oldpeak","ca"]
-            CAT = ["sex","cp","fbs","restecg","exang","slope","thal"]
-            for c in CAT: df_all[c]=df_all[c].astype(str).where(df_all[c].notna(), pd.NA)
-            Xall=df_all[NUM+CAT]; yall=df_all["target"]
-            Xtr,Xte,ytr,yte=train_test_split(Xall,yall,test_size=0.2,stratify=yall,random_state=42)
-            pre = ColumnTransformer([
-                ("num", Pipeline([("imp",SimpleImputer(strategy="median",add_indicator=True)),("sc",StandardScaler())]), NUM),
-                ("cat", Pipeline([("imp",SimpleImputer(strategy="most_frequent")),("oh",OneHotEncoder(handle_unknown="ignore"))]), CAT),
-            ], remainder="drop")
-            defs = {
-                "Régression logistique": LogisticRegression(max_iter=2000),
-                "Random Forest": RandomForestClassifier(n_estimators=300,min_samples_leaf=3,random_state=42),
-                "KNN": KNeighborsClassifier(n_neighbors=7),
-            }
-            fitted={}
-            for n,m in defs.items():
-                pipe=Pipeline([("pre",pre),("model",m)])
-                pipe.fit(Xtr,ytr)
-                fitted[n]=pipe
-            return fitted
-        try:
-            models3 = train_compare_models()
-            rows=[]
-            for name,m in models3.items():
-                prob=float(m.predict_proba(X)[0,1])
-                pred_i=int(prob>=seuil)
-                rows.append({"Modèle":name,"Probabilité_%":round(prob*100,2),"Seuil_%":round(seuil*100,2),"Prédiction":"Malade (1)" if pred_i else "Sain (0)","Décision":"Au-dessus seuil" if pred_i else "Sous seuil"})
-            res=pd.DataFrame(rows)
-            st.dataframe(res, use_container_width=True)
-            st.caption("Les 3 modèles reçoivent exactement les mêmes données saisies dans le formulaire. Comparer les probabilités/décisions aide à voir la robustesse.")
-            main_p = float(models3["Régression logistique"].predict_proba(X)[0,1])
-        except Exception as e:
-            st.warning(f"Comparaison 3 modèles indisponible: {e}")
-            main_p = float(model.predict_proba(X)[0,1])
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Probabilité (modèle retenu)", f"{main_p:.1%}")
-        c2.metric("Seuil de dépistage", f"{seuil:.1%}")
-        c3.metric("Décision", "Risque élevé" if main_p>=seuil else "Risque faible")
+        st.markdown("### Données saisies")
+        st.dataframe(X, use_container_width=True)
+
+        models3 = train_compare_models()
+        rows = []
+        for name, m in models3.items():
+            prob = float(m.predict_proba(X)[0, 1])
+            pred_i = int(prob >= seuil)
+            rows.append({
+                "Modèle": name,
+                "Probabilité malade %": round(prob * 100, 2),
+                "Seuil %": round(seuil * 100, 2),
+                "Prédiction": "Malade (1)" if pred_i else "Sain (0)",
+                "Verdict": "⚠️ Risque élevé" if pred_i else "✅ Risque faible",
+            })
+        st.markdown("### Comparaison des 3 modèles (mêmes données)")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        main_p = float(models3["Régression logistique"].predict_proba(X)[0, 1])
+        verdict = "MALADE / RISQUE ÉLEVÉ" if main_p >= seuil else "SAIN / RISQUE FAIBLE"
+        st.markdown("### Verdict final")
         if main_p >= seuil:
-            st.error("Au-dessus du seuil de dépistage : recommander un avis médical / examens complémentaires.")
+            st.error(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} ≥ seuil {seuil:.1%}. Recommandation : avis médical / examens complémentaires.")
         else:
-            st.success("En dessous du seuil : pas d’alerte modèle, mais rester vigilant si symptômes/facteurs de risque.")
-        st.progress(min(max(main_p, 0.0), 1.0))
-        st.caption("Résultat indicatif issu d’un modèle pédagogique. Validation humaine obligatoire.")
+            st.success(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} < seuil {seuil:.1%}. Pas d'alerte modèle, rester vigilant si symptômes.")
 
-    st.markdown("### Interprétation rapide")
-    st.markdown("""
-- **Probabilité** : estimation du modèle, pas un diagnostic.
-- **Seuil** : choisi pour privilégier le dépistage (rappel) plutôt que manquer des malades.
-- **Explications détaillées** : voir le notebook prioritaire (EDA, corrélation, matrice de confusion, permutation importance).
-""")
-    st.caption(meta.get("citation", ""))
+        st.markdown("### Pourquoi ce verdict ? (logique)")
+        reasons = []
+        if patient.get("cp") == "asymptomatic":
+            reasons.append("`cp=asymptomatic` : dans le dataset, associé à un taux élevé de maladie.")
+        if str(patient.get("exang")) in ["True", "1", "True.0"]:
+            reasons.append("`exang=True` : angine à l'effort, signal fort.")
+        if float(patient.get("oldpeak", 0)) >= 1.0:
+            reasons.append("`oldpeak` élevé : dépression ST à l'effort, associée au risque.")
+        if float(patient.get("thalch", 200)) < 140:
+            reasons.append("`thalch` faible : fréquence cardiaque max réduite, souvent observée chez malades.")
+        if float(patient.get("ca", 0)) >= 1:
+            reasons.append("`ca >= 1` : vaisseaux majeurs colorés, signal important.")
+        if patient.get("thal") in ["reversable defect", "fixed defect"]:
+            reasons.append("`thal` anormal : associé à plus de maladie que `normal`.")
+        if not reasons:
+            reasons.append("Aucun signal fort évident isolé ; le modèle combine toutes les variables (effets non linéaires possibles).")
+        st.write("- " + "\n- ".join(reasons))
+        st.warning("Verdict pédagogique issu d'un modèle statistique. Il ne remplace pas un diagnostic médical.")
 
+# -------------------- PAGE 4 --------------------
 else:
-    st.subheader("Notebook prioritaire — CardioRisk")
-    st.success("Ce notebook est la référence prioritaire : contexte, interprétations figure par figure, corrélation, pipeline anti-fuite, comparaison modèles, seuil, limites.")
+    st.header("4) Notebook prioritaire")
+    st.success("Le notebook CardioRisk contient le détail complet : code, sorties, graphiques, interprétations figure par figure.")
     render_notebook(NOTEBOOK_PRIORITY)
+
+st.sidebar.markdown("---")
+st.sidebar.caption("CardioRisk Studio — ISCAE")
+st.sidebar.caption("Équipe: " + ", ".join(TEAM))
+st.sidebar.markdown(f"[GitHub]({GITHUB_URL})")
