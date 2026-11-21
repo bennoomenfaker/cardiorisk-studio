@@ -1,0 +1,71 @@
+{
+  "seuil": 0.37998928184245057,
+  "num": {
+    "age": {
+      "min": 28.0,
+      "max": 77.0,
+      "median": 54.0
+    },
+    "trestbps": {
+      "min": 80.0,
+      "max": 200.0,
+      "median": 130.0
+    },
+    "chol": {
+      "min": 85.0,
+      "max": 603.0,
+      "median": 239.5
+    },
+    "thalch": {
+      "min": 60.0,
+      "max": 202.0,
+      "median": 140.0
+    },
+    "oldpeak": {
+      "min": -2.6,
+      "max": 6.2,
+      "median": 0.5
+    },
+    "ca": {
+      "min": 0.0,
+      "max": 3.0,
+      "median": 0.0
+    }
+  },
+  "cat": {
+    "sex": [
+      "Female",
+      "Male"
+    ],
+    "cp": [
+      "asymptomatic",
+      "atypical angina",
+      "non-anginal",
+      "typical angina"
+    ],
+    "fbs": [
+      "False",
+      "True"
+    ],
+    "restecg": [
+      "lv hypertrophy",
+      "normal",
+      "st-t abnormality"
+    ],
+    "exang": [
+      "False",
+      "True"
+    ],
+    "slope": [
+      "downsloping",
+      "flat",
+      "upsloping"
+    ],
+    "thal": [
+      "fixed defect",
+      "normal",
+      "reversable defect"
+    ]
+  },
+  "citation": "Janosi, Steinbrunn, Pfisterer & Detrano (1989). Heart Disease. UCI ML Repository. https://doi.org/10.24432/C52P4X (CC BY 4.0)"
+}
