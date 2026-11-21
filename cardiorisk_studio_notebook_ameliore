@@ -1,0 +1,650 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "aba470e9",
+   "metadata": {},
+   "source": [
+    "# CardioRisk Studio — prédiction de maladie cardiaque\n",
+    "\n",
+    "**Notebook pédagogique réorganisé** · Classification binaire à partir du dataset UCI Heart Disease.\n",
+    "\n",
+    "**Objectif :** prédire la cible `target` : `0 = absence` et `1 = présence` de maladie (diagnostic d’origine `num > 0`). Ce notebook montre les étapes dans leur ordre logique : comprendre les données, explorer leur qualité, corriger les valeurs invalides, explorer les relations, puis préparer et évaluer des modèles.\n",
+    "\n",
+    "> **Important :** ce travail est pédagogique. Le dataset ancien et la validation sur un seul découpage ne permettent pas un usage médical ni une conclusion clinique."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "23c7f522",
+   "metadata": {},
+   "source": [
+    "## 1. Importer les bibliothèques"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8619b4ec",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "\n",
+    "from sklearn.model_selection import train_test_split\n",
+    "from sklearn.compose import ColumnTransformer\n",
+    "from sklearn.pipeline import Pipeline\n",
+    "from sklearn.impute import SimpleImputer\n",
+    "from sklearn.preprocessing import OneHotEncoder, StandardScaler\n",
+    "from sklearn.dummy import DummyClassifier\n",
+    "from sklearn.linear_model import LogisticRegression\n",
+    "from sklearn.ensemble import RandomForestClassifier\n",
+    "from sklearn.neighbors import KNeighborsClassifier\n",
+    "from sklearn.metrics import (accuracy_score, precision_score, recall_score,\n",
+    "                             f1_score, roc_auc_score, confusion_matrix,\n",
+    "                             classification_report, ConfusionMatrixDisplay)\n",
+    "\n",
+    "RANDOM_STATE = 42\n",
+    "sns.set_theme(style=\"whitegrid\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "178e9a56",
+   "metadata": {},
+   "source": [
+    "## 2. Charger le fichier et vérifier sa structure\n",
+    "\n",
+    "Le CSV doit se trouver dans le même dossier que ce notebook. Garder le dataset brut dans `df_raw` permet de revenir aux données originales sans perdre d’information."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6bf97cb9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "DATA_PATH = \"heart_disease_uci.csv\"\n",
+    "df_raw = pd.read_csv(DATA_PATH)\n",
+    "print(f\"Dimensions : {df_raw.shape[0]} lignes × {df_raw.shape[1]} colonnes\")\n",
+    "df_raw.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f97635e1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df_raw.info()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "69b6513b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df_raw.describe(include=\"all\").T"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "58af706c",
+   "metadata": {},
+   "source": [
+    "## 3. Comprendre les colonnes avant le nettoyage\n",
+    "\n",
+    "Les variables catégorielles décrivent des groupes ou des modalités : on ne calcule pas une moyenne de leurs étiquettes. Les variables numériques représentent des mesures ou des quantités. Le type informatique (`int`, `float`, `object`) ne suffit pas toujours à déterminer le sens statistique : par exemple `ca` est enregistré comme nombre, mais représente un décompte de vaisseaux."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "1d209fc9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "dictionnaire = pd.DataFrame([\n",
+    "    [\"id\", \"Identifiant de ligne\", \"Métadonnée — exclue\"],\n",
+    "    [\"age\", \"Âge en années\", \"Numérique\"],\n",
+    "    [\"sex\", \"Sexe enregistré (Male/Female)\", \"Catégorielle\"],\n",
+    "    [\"dataset\", \"Centre d'origine\", \"Métadonnée — exclue\"],\n",
+    "    [\"cp\", \"Type de douleur thoracique\", \"Catégorielle\"],\n",
+    "    [\"trestbps\", \"Pression artérielle au repos (mm Hg)\", \"Numérique\"],\n",
+    "    [\"chol\", \"Cholestérol sérique (mg/dl)\", \"Numérique\"],\n",
+    "    [\"fbs\", \"Glycémie à jeun > 120 mg/dl\", \"Catégorielle binaire\"],\n",
+    "    [\"restecg\", \"Résultat ECG au repos\", \"Catégorielle\"],\n",
+    "    [\"thalch\", \"Fréquence cardiaque maximale à l'effort\", \"Numérique\"],\n",
+    "    [\"exang\", \"Angine provoquée par l'effort\", \"Catégorielle binaire\"],\n",
+    "    [\"oldpeak\", \"Dépression ST à l'effort\", \"Numérique\"],\n",
+    "    [\"slope\", \"Pente du segment ST à l'effort\", \"Catégorielle ordinale\"],\n",
+    "    [\"ca\", \"Nombre de vaisseaux majeurs observés (0–3)\", \"Numérique / décompte\"],\n",
+    "    [\"thal\", \"Résultat du test thal/perfusion\", \"Catégorielle\"],\n",
+    "    [\"num\", \"Diagnostic d'origine (0–4)\", \"Cible d'origine\"],\n",
+    "], columns=[\"Colonne\", \"Signification\", \"Nature / rôle\"])\n",
+    "dictionnaire"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2e32d66a",
+   "metadata": {},
+   "source": [
+    "### Modalités catégorielles en langage simple\n",
+    "\n",
+    "- `cp` : `typical angina` (angine typique), `atypical angina` (angine atypique), `non-anginal` (douleur non angineuse), `asymptomatic` (sans douleur rapportée).\n",
+    "- `sex` : sexe enregistré (`Male`, `Female`).\n",
+    "- `fbs` : glycémie à jeun supérieure à 120 mg/dl (`True/False`).\n",
+    "- `restecg` : résultat de l’ECG au repos (`normal`, `lv hypertrophy`, `st-t abnormality`).\n",
+    "- `exang` : douleur angineuse provoquée par l’effort (`True/False`).\n",
+    "- `slope` : pente ST (`upsloping`, `flat`, `downsloping`).\n",
+    "- `thal` : résultat de perfusion (`normal`, `fixed defect`, `reversable defect`).\n",
+    "\n",
+    "La cible binaire du projet sera créée à partir de `num` : les valeurs `1` à `4` sont regroupées en présence de maladie. Cette simplification fait perdre l’information de sévérité."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "648ee48c",
+   "metadata": {},
+   "source": [
+    "## 4. Explorer les valeurs manquantes et la cible dans les données brutes"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c3954972",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Nombre et pourcentage de valeurs manquantes (NaN) dans chaque colonne\n",
+    "manquants = pd.DataFrame({\n",
+    "    \"Nombre manquant\": df_raw.isna().sum(),\n",
+    "    \"Pourcentage (%)\": (df_raw.isna().mean() * 100).round(1)\n",
+    "}).sort_values(\"Nombre manquant\", ascending=False)\n",
+    "manquants[manquants[\"Nombre manquant\"] > 0]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0d132824",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(\"Doublons complets :\", df_raw.duplicated().sum())\n",
+    "print(\"Valeurs de num :\")\n",
+    "print(df_raw[\"num\"].value_counts(dropna=False).sort_index())\n",
+    "print(\"\\nEffectifs après regroupement binaire :\")\n",
+    "print((df_raw[\"num\"] > 0).value_counts().rename(index={False: \"Absence\", True: \"Présence\"}))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c93ffbb7",
+   "metadata": {},
+   "source": [
+    "**À retenir :** dans ce fichier, `cp` n’a pas de valeur manquante. Les absences sont concentrées surtout dans `ca`, `thal` et `slope`. Les `NaN` sont des données non renseignées; ils ne signifient pas zéro."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a98c272c",
+   "metadata": {},
+   "source": [
+    "## 5. Nettoyage minimal : corriger les zéros invalides et créer la cible"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "88015baa",
+   "metadata": {},
+   "source": [
+    "Un zéro peut être une vraie mesure pour certaines variables, mais ici le dictionnaire du projet considère `chol == 0` et `trestbps == 0` comme des mesures invalides. On les transforme donc en `NaN` afin de les traiter comme inconnues, et non comme des mesures réellement nulles.\n",
+    "\n",
+    "**Ce n’est pas encore l’imputation par médiane.** À cette étape, on ne remplace rien par une médiane : on marque les valeurs invalides. L’imputation statistique sera apprise plus tard uniquement à partir de l’ensemble d’entraînement, dans le pipeline du modèle."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ca4b2f0f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "data = df_raw.copy()\n",
+    "print(\"Zéros détectés avant correction :\")\n",
+    "print(\"chol     :\", (data[\"chol\"] == 0).sum())\n",
+    "print(\"trestbps :\", (data[\"trestbps\"] == 0).sum())\n",
+    "\n",
+    "data[\"chol\"] = data[\"chol\"].replace(0, np.nan)\n",
+    "data[\"trestbps\"] = data[\"trestbps\"].replace(0, np.nan)\n",
+    "data[\"target\"] = (data[\"num\"] > 0).astype(int)\n",
+    "\n",
+    "print(\"\\nCible créée : 0 = absence, 1 = présence\")\n",
+    "print(data[\"target\"].value_counts().sort_index())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "615b8e3d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comparer avant et après correction : des valeurs manquantes en plus sont attendues\n",
+    "comparaison = pd.DataFrame({\n",
+    "    \"manquants avant\": df_raw.isna().sum(),\n",
+    "    \"manquants après correction\": data.isna().sum()\n",
+    "})\n",
+    "comparaison[comparaison.max(axis=1) > 0].sort_values(\"manquants après correction\", ascending=False)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b0daf658",
+   "metadata": {},
+   "source": [
+    "## 6. Exploration visuelle après correction"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e1bf1735",
+   "metadata": {},
+   "source": [
+    "Ces graphiques servent à décrire le dataset et à repérer des différences entre groupes. Ils ne démontrent ni cause ni capacité de diagnostic."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "523af4aa",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Répartition de la cible\n",
+    "ax = data[\"target\"].value_counts().sort_index().rename(index={0: \"Absence\", 1: \"Présence\"}).plot(\n",
+    "    kind=\"bar\", color=[\"#4C78A8\", \"#F58518\"], figsize=(6, 4)\n",
+    ")\n",
+    "ax.set_title(\"Répartition de la cible\")\n",
+    "ax.set_xlabel(\"Maladie cardiaque\")\n",
+    "ax.set_ylabel(\"Nombre de dossiers\")\n",
+    "plt.xticks(rotation=0)\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f85f6a25",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Distribution de l'âge selon la cible\n",
+    "plt.figure(figsize=(7, 4))\n",
+    "sns.histplot(data=data, x=\"age\", hue=\"target\", bins=20, kde=True,\n",
+    "             palette={0: \"#4C78A8\", 1: \"#F58518\"})\n",
+    "plt.title(\"Âge selon la cible (0 = absence, 1 = présence)\")\n",
+    "plt.xlabel(\"Âge (années)\")\n",
+    "plt.ylabel(\"Effectif\")\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b82d0997",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comparer les variables d'effort\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(11, 4))\n",
+    "sns.boxplot(data=data, x=\"target\", y=\"thalch\", hue=\"target\", legend=False, ax=axes[0])\n",
+    "axes[0].set_title(\"Fréquence cardiaque maximale\")\n",
+    "axes[0].set_xlabel(\"Cible (0/1)\")\n",
+    "axes[0].set_ylabel(\"Battements/minute\")\n",
+    "sns.boxplot(data=data, x=\"target\", y=\"oldpeak\", hue=\"target\", legend=False, ax=axes[1])\n",
+    "axes[1].set_title(\"Dépression ST (oldpeak)\")\n",
+    "axes[1].set_xlabel(\"Cible (0/1)\")\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "162a00c5",
+   "metadata": {},
+   "source": [
+    "Les boîtes et distributions montrent des associations observées dans cet échantillon. Elles ne signifient pas que l’âge ou une mesure donnée cause la maladie."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "24248d09",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Type de douleur thoracique (cp) selon la cible\n",
+    "plt.figure(figsize=(9, 4))\n",
+    "sns.countplot(data=data, x=\"cp\", hue=\"target\", hue_order=[0, 1],\n",
+    "              palette={0: \"#4C78A8\", 1: \"#F58518\"})\n",
+    "plt.title(\"Type de douleur thoracique selon la cible\")\n",
+    "plt.xlabel(\"Type de douleur (cp)\")\n",
+    "plt.ylabel(\"Nombre de dossiers\")\n",
+    "plt.xticks(rotation=20, ha=\"right\")\n",
+    "plt.legend(title=\"Cible\", labels=[\"0 = absence\", \"1 = présence\"])\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4eee42b0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Visualiser les colonnes incomplètes\n",
+    "miss = data.isna().sum().sort_values()\n",
+    "miss = miss[miss > 0]\n",
+    "plt.figure(figsize=(7, 4))\n",
+    "miss.plot(kind=\"barh\", color=\"#E45756\")\n",
+    "plt.title(\"Valeurs manquantes après correction des zéros invalides\")\n",
+    "plt.xlabel(\"Nombre de valeurs manquantes\")\n",
+    "plt.ylabel(\"Variable\")\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "88fbfd5d",
+   "metadata": {},
+   "source": [
+    "## 7. Étudier les associations sans encoder les catégories comme des nombres"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "553b65f3",
+   "metadata": {},
+   "source": [
+    "Une corrélation de Pearson convient surtout aux variables numériques et mesure une association linéaire. Il ne faut pas convertir arbitrairement les catégories (`cp`, `thal`, etc.) en 0, 1, 2… puis interpréter cette corrélation : le résultat dépendrait de l’ordre choisi pour les étiquettes. Ici, on calcule donc la matrice numérique seulement, en excluant l’identifiant, la cible d’origine et la métadonnée du centre. Les manquants sont ignorés paire par paire pour cette exploration."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "36e709f6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "numeric_for_corr = [\"age\", \"trestbps\", \"chol\", \"thalch\", \"oldpeak\", \"ca\", \"target\"]\n",
+    "corr = data[numeric_for_corr].corr(method=\"pearson\")\n",
+    "plt.figure(figsize=(8, 6))\n",
+    "sns.heatmap(corr, annot=True, fmt=\".2f\", cmap=\"coolwarm\", center=0, vmin=-1, vmax=1)\n",
+    "plt.title(\"Corrélations de Pearson — variables numériques seulement\")\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "379b7b3e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Corrélation numérique avec la cible (descriptive, pas causale)\n",
+    "corr[\"target\"].drop(\"target\").sort_values(key=lambda s: s.abs(), ascending=False)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1c957111",
+   "metadata": {},
+   "source": [
+    "Pour `cp` et les autres catégories, le graphique de répartition par cible est plus approprié qu’une corrélation calculée après un codage arbitraire. Une analyse statistique catégorielle avancée (par exemple chi-deux / V de Cramér) peut être ajoutée plus tard, mais n’est pas nécessaire pour comprendre et exécuter ce premier notebook."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9e551361",
+   "metadata": {},
+   "source": [
+    "## 8. Définir les entrées du modèle et séparer train/test"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "20a34775",
+   "metadata": {},
+   "source": [
+    "On retire `id` (identifiant), `dataset` (centre utilisé ici comme métadonnée) et `num` (diagnostic d’origine, qui a servi à créer `target`). Le jeu de test est mis de côté avant d’apprendre les médianes, les modes, les échelles et les catégories du modèle."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "1e89651a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "numeric_features = [\"age\", \"trestbps\", \"chol\", \"thalch\", \"oldpeak\", \"ca\"]\n",
+    "categorical_features = [\"sex\", \"cp\", \"fbs\", \"restecg\", \"exang\", \"slope\", \"thal\"]\n",
+    "features = numeric_features + categorical_features\n",
+    "\n",
+    "X = data[features].copy()\n",
+    "y = data[\"target\"].copy()\n",
+    "\n",
+    "X_train, X_test, y_train, y_test = train_test_split(\n",
+    "    X, y, test_size=0.20, random_state=RANDOM_STATE, stratify=y\n",
+    ")\n",
+    "print(\"Entraînement :\", X_train.shape, \" Test :\", X_test.shape)\n",
+    "print(\"Proportion cible dans train :\\n\", y_train.value_counts(normalize=True).sort_index().round(3))\n",
+    "print(\"Proportion cible dans test :\\n\", y_test.value_counts(normalize=True).sort_index().round(3))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "84b89539",
+   "metadata": {},
+   "source": [
+    "## 9. Préparer les colonnes dans un pipeline"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "208357ae",
+   "metadata": {},
+   "source": [
+    "**Pourquoi la médiane ?** Pour une mesure numérique, la médiane est moins sensible aux valeurs extrêmes que la moyenne. **Pourquoi le mode ?** Pour une catégorie, on remplace une absence par la modalité la plus fréquente plutôt que de calculer une moyenne sans sens.\n",
+    "\n",
+    "Le pipeline ajuste ces valeurs **sur `X_train` seulement** et applique ensuite les mêmes transformations à `X_test`. Ainsi, le test ne participe pas à la préparation qui apprend le modèle. Les variables catégorielles sont converties en indicateurs 0/1 avec One-Hot Encoding. La standardisation est utile aux modèles sensibles aux échelles (notamment la régression logistique et KNN)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8e9ec219",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "numeric_pipeline = Pipeline(steps=[\n",
+    "    (\"imputer\", SimpleImputer(strategy=\"median\")),\n",
+    "    (\"scaler\", StandardScaler())\n",
+    "])\n",
+    "\n",
+    "categorical_pipeline = Pipeline(steps=[\n",
+    "    (\"imputer\", SimpleImputer(strategy=\"most_frequent\")),\n",
+    "    (\"onehot\", OneHotEncoder(handle_unknown=\"ignore\"))\n",
+    "])\n",
+    "\n",
+    "preprocessor = ColumnTransformer(transformers=[\n",
+    "    (\"numeric\", numeric_pipeline, numeric_features),\n",
+    "    (\"categorical\", categorical_pipeline, categorical_features)\n",
+    "])\n",
+    "print(\"Préprocesseur défini : il sera ajusté pendant le fit sur X_train.\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "fe913aba",
+   "metadata": {},
+   "source": [
+    "## 10. Entraîner une baseline et trois modèles"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9762c5db",
+   "metadata": {},
+   "source": [
+    "La baseline prédit toujours la classe majoritaire. Elle sert de point de comparaison minimal. Les autres modèles sont entraînés avec le même prétraitement."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "330abb38",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "models = {\n",
+    "    \"Baseline (classe majoritaire)\": DummyClassifier(strategy=\"most_frequent\"),\n",
+    "    \"Régression logistique\": LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),\n",
+    "    \"Random Forest\": RandomForestClassifier(n_estimators=200, random_state=RANDOM_STATE),\n",
+    "    \"KNN (k=7)\": KNeighborsClassifier(n_neighbors=7)\n",
+    "}\n",
+    "\n",
+    "pipelines = {}\n",
+    "for name, estimator in models.items():\n",
+    "    pipe = Pipeline(steps=[(\"preparation\", preprocessor), (\"modele\", estimator)])\n",
+    "    pipe.fit(X_train, y_train)\n",
+    "    pipelines[name] = pipe\n",
+    "    print(f\"Modèle entraîné : {name}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f740a746",
+   "metadata": {},
+   "source": [
+    "## 11. Évaluer les modèles sur le jeu de test"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1b23589e",
+   "metadata": {},
+   "source": [
+    "L’accuracy donne la part totale de réponses correctes. Le rappel mesure la part des cas positifs retrouvés. La précision mesure la part des prédictions positives qui sont correctes. Le F1 combine précision et rappel. L’AUC évalue le classement des probabilités sur plusieurs seuils. Ces scores restent des résultats exploratoires sur ce jeu de test."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "464c0fad",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rows = []\n",
+    "predictions = {}\n",
+    "for name, pipe in pipelines.items():\n",
+    "    y_pred = pipe.predict(X_test)\n",
+    "    predictions[name] = y_pred\n",
+    "    if hasattr(pipe, \"predict_proba\"):\n",
+    "        y_proba = pipe.predict_proba(X_test)[:, 1]\n",
+    "    else:\n",
+    "        y_proba = y_pred.astype(float)\n",
+    "    rows.append({\n",
+    "        \"Modèle\": name,\n",
+    "        \"Accuracy\": accuracy_score(y_test, y_pred),\n",
+    "        \"Précision\": precision_score(y_test, y_pred, zero_division=0),\n",
+    "        \"Rappel\": recall_score(y_test, y_pred, zero_division=0),\n",
+    "        \"F1\": f1_score(y_test, y_pred, zero_division=0),\n",
+    "        \"ROC-AUC\": roc_auc_score(y_test, y_proba)\n",
+    "    })\n",
+    "\n",
+    "results = pd.DataFrame(rows).set_index(\"Modèle\").sort_values(\"F1\", ascending=False)\n",
+    "results.round(3)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fee1c74f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "ax = results[[\"Accuracy\", \"Précision\", \"Rappel\", \"F1\", \"ROC-AUC\"]].plot(\n",
+    "    kind=\"bar\", figsize=(10, 5), ylim=(0, 1)\n",
+    ")\n",
+    "ax.set_title(\"Comparaison des modèles sur le jeu de test\")\n",
+    "ax.set_ylabel(\"Score\")\n",
+    "ax.set_xlabel(\"\")\n",
+    "plt.xticks(rotation=20, ha=\"right\")\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "bfc5512d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Matrice de confusion du meilleur modèle par F1 (hors baseline)\n",
+    "ml_results = results.drop(index=\"Baseline (classe majoritaire)\", errors=\"ignore\")\n",
+    "best_name = ml_results[\"F1\"].idxmax()\n",
+    "best_model = pipelines[best_name]\n",
+    "print(\"Modèle choisi selon F1 :\", best_name)\n",
+    "print(classification_report(y_test, best_model.predict(X_test),\n",
+    "                            target_names=[\"Absence (0)\", \"Présence (1)\"], zero_division=0))\n",
+    "ConfusionMatrixDisplay.from_estimator(\n",
+    "    best_model, X_test, y_test,\n",
+    "    display_labels=[\"Absence (0)\", \"Présence (1)\"], cmap=\"Blues\"\n",
+    ")\n",
+    "plt.title(f\"Matrice de confusion — {best_name}\")\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a7aa2a99",
+   "metadata": {},
+   "source": [
+    "## 12. Conclusion et limites\n",
+    "\n",
+    "1. La cible a été construite en regroupant `num = 1, 2, 3, 4` en présence de maladie (`target = 1`); `num = 0` devient absence (`target = 0`).\n",
+    "2. Les zéros de `chol` et `trestbps` ont été traités comme invalides puis marqués manquants. L’imputation médiane/mode intervient **après le split**, dans le pipeline ajusté sur l’entraînement.\n",
+    "3. La corrélation de Pearson a été limitée aux variables numériques; les catégories sont explorées avec leurs effectifs plutôt qu’avec des codes numériques arbitraires.\n",
+    "4. Les performances peuvent varier selon le découpage. Une validation croisée et une validation sur un autre jeu de données seraient nécessaires pour une étude plus robuste.\n",
+    "5. Ce dataset historique de 920 observations est incomplet et multi-centres. Les scores ne sont pas une preuve de validité clinique. **Ne pas utiliser ce modèle pour poser un diagnostic ou décider d’un traitement.**"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.x"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
