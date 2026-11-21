@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 from pathlib import Path
 
@@ -97,7 +98,39 @@ def render_notebook(path: Path):
 
 
 @st.cache_data
+def get_notebook_process_image():
+    """Use same process image as notebook (cell with FancyBboxPatch/Données brutes) if available."""
+    if not NOTEBOOK_PRIORITY.exists():
+        return None
+    try:
+        nb = json.loads(NOTEBOOK_PRIORITY.read_text(encoding="utf-8"))
+        for cell in nb.get("cells", []):
+            src = "".join(cell.get("source", []))
+            if cell.get("cell_type") == "code" and "Données brutes" in src and "FancyBboxPatch" in src:
+                for out in cell.get("outputs", []):
+                    data = out.get("data", {})
+                    if "image/png" in data:
+                        img = data["image/png"]
+                        img = "".join(img) if isinstance(img, list) else img
+                        return base64.b64decode(img)
+                # generate from notebook code if no output
+                local = {"plt": plt, "FancyBboxPatch": FancyBboxPatch}
+                exec(compile(src, "<nb_process>", "exec"), local)
+                buf = io.BytesIO()
+                plt.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+                plt.close("all")
+                return buf.getvalue()
+    except Exception:
+        return None
+    return None
+
+
+@st.cache_data
 def process_figure():
+    img = get_notebook_process_image()
+    if img:
+        return img
+    # fallback
     steps = [
         ("1  Données brutes", "CSV UCI / Kaggle"),
         ("2  Audit & nettoyage", "NaN, zéros invalides,\ncible binaire"),
@@ -123,7 +156,10 @@ def process_figure():
     ax.set_ylim(0, 1.4)
     ax.set_title("Processus ML — CardioRisk Studio", fontsize=12, fontweight="bold")
     fig.tight_layout()
-    return fig
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=160, bbox_inches='tight')
+    plt.close(fig)
+    return buf.getvalue()
 
 
 @st.cache_data
@@ -238,11 +274,10 @@ Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les prof
 | **Recall/Rappel** | % de vrais malades détectés. Prioritaire ici. |
 """)
 
-    st.subheader("Processus ML (image)")
-    fig_proc = process_figure()
-    st.pyplot(fig_proc)
-    plt.close(fig_proc)
-    st.caption("Schéma du processus : données brutes → audit/nettoyage → EDA → split → pipeline/modèles → évaluation → seuil → export (joblib/json) → app Streamlit.")
+    st.subheader("Processus ML (même schéma que le notebook)")
+    proc_img = process_figure()
+    st.image(proc_img, use_container_width=True)
+    st.caption("Même image/schéma que le notebook CardioRisk : de la donnée brute à l’export (model.joblib/model_meta.json) puis l’app Streamlit.")
 
     st.subheader("Description des variables")
     var_rows = []
@@ -268,113 +303,158 @@ Dans ce projet, la sortie du modèle est une **probabilité estimée** de maladi
 
 # -------------------- PAGE 2 --------------------
 elif page.startswith("2"):
-    st.header("2) Processus ML — pas à pas (explications)")
+    st.header("2) Processus ML — pas à pas (détaillé)")
 
-    st.subheader("Étape 1 — Lecture des fichiers / compréhension")
     st.markdown("""
-- **Action** : charger `heart_disease_uci.csv`, afficher `head`, `shape`, `info`, `describe`.
-- **Utilité** : comprendre la structure, les types, les plages de valeurs, et détecter anomalies.
-- **Observation dataset** : 920 observations, 16 colonnes brutes, 5 centres.
+Cette page suit le **même processus** que le notebook, avec des graphiques explicatifs et une interprétation pour chaque étape.
+Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
+""")
+
+    # --- Step 1 ---
+    st.subheader("Étape 1 — Lecture et compréhension des données")
+    st.markdown("""
+**Action** : charger `heart_disease_uci.csv`, inspecter `head()`, `shape`, `info()`, `describe()`.
+**Utilité** : comprendre le contenu réel avant toute modélisation ; repérer types, valeurs aberrantes, échelles.
+**Comment lire** : `shape` = (lignes, colonnes) ; `describe` donne min/25%/50%/75%/max ; `info` donne types et non-nulls.
 """)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Observations", df.shape[0])
     c2.metric("Colonnes brutes", 16)
     c3.metric("Sains (0)", int((df["target"] == 0).sum()))
     c4.metric("Malades (1)", int((df["target"] == 1).sum()))
-    st.dataframe(df.head(), use_container_width=True)
+    st.dataframe(df.head(8), use_container_width=True)
+    with st.expander("Statistiques descriptives (describe)"):
+        st.dataframe(df.describe(include="all").T, use_container_width=True)
+        st.caption("Lecture : count faible = valeurs manquantes ; écart mean/50% = asymétrie ; min/max extrêmes = outliers ou erreurs.")
 
-    st.subheader("Étape 2 — Détection qualité : NA, doublons, types")
+    # --- Step 2 ---
+    st.subheader("Étape 2 — Détection qualité : NA, doublons, valeurs invalides")
     st.markdown("""
-- **Valeurs manquantes** : `ca`, `thal`, `slope` très incomplètes ; `chol`, `fbs`, `oldpeak`, `trestbps`, `thalch`, `exang` partiellement.
-- **Doublons** : à vérifier avec `df.duplicated().sum()`.
-- **Zéros invalides** : `chol==0` et `trestbps==0` sont médicalement impossibles → convertis en NaN.
-- **Variables catégorielles** : `sex, cp, fbs, restecg, exang, slope, thal` (texte/catégories).
-- **Variables numériques** : `age, trestbps, chol, thalch, oldpeak, ca`.
+**Action** : `isna().sum()`, `duplicated().sum()`, vérifier `chol==0`, `trestbps==0`.
+**Utilité** : décider stratégie de nettoyage. Sans ça, le modèle apprend sur du bruit ou plante sur NaN.
+**Règle** : 0 pour cholestérol/tension au repos est médicalement impossible → traité comme NaN.
 """)
-    miss = df.isna().sum().sort_values(ascending=False)
-    miss = miss[miss > 0]
-    st.bar_chart(miss)
-    st.caption("Barres = nombre de valeurs manquantes par colonne. Plus la barre est longue, plus il faut une stratégie d'imputation prudente.")
+    dup = int(df.duplicated().sum())
+    chol0 = int((pd.read_csv(DATA_PATH)["chol"] == 0).sum())
+    tre0 = int((pd.read_csv(DATA_PATH)["trestbps"] == 0).sum())
+    k1,k2,k3 = st.columns(3)
+    k1.metric("Doublons", dup)
+    k2.metric("chol == 0 (invalide)", chol0)
+    k3.metric("trestbps == 0 (invalide)", tre0)
 
-    st.subheader("Étape 3 — Data preparation / cleaning / preprocessing")
+    miss = df.isna().sum().sort_values(ascending=True)
+    miss = miss[miss > 0]
+    fig_m, ax_m = plt.subplots(figsize=(8, 4))
+    miss.plot(kind="barh", ax=ax_m, color="#4C78A8")
+    ax_m.set_title("Valeurs manquantes par colonne")
+    ax_m.set_xlabel("Nombre de NaN")
+    st.pyplot(fig_m); plt.close(fig_m)
+    st.caption("**Nom** : barplot horizontal des valeurs manquantes. **Lecture** : longueur = nombre de NaN. **Interprétation** : `ca/thal/slope` très incomplètes → imputation + indicateur de manquant, pas suppression massive.")
+
+    # --- Step 3 ---
+    st.subheader("Étape 3 — Préparation / nettoyage / preprocessing")
     st.markdown("""
-**Pourquoi nettoyer/préparer ?** Les modèles ne gèrent pas bien les NaN, les échelles différentes, ni le texte brut.
+**Utilité** : rendre les données utilisables par les modèles et éviter la fuite de données.
 
 | Problème | Traitement | Pourquoi |
 |---|---|---|
-| `chol==0`, `trestbps==0` | Remplacer par NaN | Valeur impossible, ce n'est pas une vraie mesure |
-| NA numériques | **Médiane** (`SimpleImputer(strategy='median')`) | Robuste aux valeurs extrêmes/outliers ; la moyenne serait tirée par les valeurs extrêmes |
-| NA catégorielles | **Mode** (`most_frequent`) | Pour une catégorie, la valeur la plus fréquente est le remplacement simple ; on ne peut pas faire de moyenne sur du texte |
-| Catégorielles | **OneHotEncoder** | Transformer texte en colonnes 0/1 sans ordre artificiel |
-| Numériques | **StandardScaler** | Mettre à la même échelle (moyenne 0, écart-type 1), important pour KNN/régression logistique |
-| NA important (`ca`) | `add_indicator=True` | Ajoute une colonne “valeur manquante” pour que le modèle distingue un vrai 0 d'un 0 imputé |
+| `chol==0`, `trestbps==0` | Convertir en NaN | Valeur impossible, pas une vraie mesure |
+| NA numériques | **Médiane** | Robuste aux outliers ; la moyenne est tirée par les extrêmes |
+| NA catégorielles | **Mode** (plus fréquent) | Catégorie la plus probable ; pas de moyenne possible sur du texte |
+| Variables catégorielles | **OneHotEncoder** | Transforme texte en 0/1 sans ordre artificiel |
+| Variables numériques | **StandardScaler** | Même échelle (moyenne 0, écart-type 1), utile pour KNN/Régression logistique |
+| `ca` très manquant | `add_indicator=True` | Le modèle distingue “vrai 0” de “0 imputé car manquant” |
 
-**Anti-fuite** : tout `fit` (médiane, mode, scaler, encoder) est fait **sur le train uniquement** dans un `Pipeline`.
+**Anti-fuite** : tous les `fit` (médiane/mode/scaler/encoder) se font sur **train uniquement** via `Pipeline`.
 """)
-    st.info("""
-**Export (fin du processus, pour l'app)**  
-Après entraînement/évaluation, on sauvegarde : `model.joblib` (pipeline complet) et `model_meta.json` (seuil calculé, bornes, catégories, citation).  
-Ainsi l'application Streamlit charge le modèle sauvegardé pour prédire, sans réentraîner.
-""")
+    st.info("**Export fin de processus** : `model.joblib` (pipeline entraîné) + `model_meta.json` (seuil calculé, bornes, catégories, citation) pour l’app Streamlit.")
 
-    st.subheader("Étape 4 — Cible (target)")
-    st.markdown("""
-- `num` = 0..4 (gravité). Pour classification binaire : **`target = 1` si `num > 0` sinon `0`**.
-- **Pourquoi ?** Simplifie en dépistage : malade / non malade. Les classes sont assez équilibrées (~55% / 45%).
-""")
+    # --- Step 4 EDA ---
+    st.subheader("Étape 4 — Exploration (EDA) : graphiques explicatifs")
+    st.markdown("**Utilité** : comprendre les relations variable-cible avant modélisation. Chaque graphique répond à une question.")
 
+    # target distribution
+    fig_t, ax_t = plt.subplots(figsize=(5,3.5))
+    counts = df["target"].value_counts().sort_index()
+    ax_t.bar(["Sain (0)", "Malade (1)"], [counts.get(0,0), counts.get(1,0)], color=["#4C78A8","#E45756"])
+    ax_t.set_title("Distribution de la cible")
+    ax_t.set_ylabel("Nombre de patients")
+    for i,v in enumerate([counts.get(0,0), counts.get(1,0)]): ax_t.text(i,v+5,str(int(v)),ha="center")
+    st.pyplot(fig_t); plt.close(fig_t)
+    st.caption("**Nom** : countplot/barplot cible. **Utilité** : vérifier équilibre des classes. **Interprétation** : classes assez équilibrées (~45/55) ; accuracy utilisable mais on surveille aussi Recall/F1.")
+
+    # age by target
+    fig_age, axes_age = plt.subplots(1,2,figsize=(11,4))
+    for t,label,color in [(0,'Sain (0)','#4C78A8'),(1,'Malade (1)','#E45756')]:
+        axes_age[0].hist(df.loc[df['target']==t,'age'].dropna(), bins=15, alpha=0.5, label=label, color=color)
+    axes_age[0].set_title('Âge par cible (histogramme)'); axes_age[0].set_xlabel('Âge'); axes_age[0].set_ylabel('Nombre'); axes_age[0].legend()
+    sns.boxplot(data=df, x='target', y='age', ax=axes_age[1], palette=['#4C78A8','#E45756'])
+    axes_age[1].set_title('Âge par cible (boxplot)'); axes_age[1].set_xticks([0,1]); axes_age[1].set_xticklabels(['Sain (0)','Malade (1)'])
+    plt.tight_layout(); st.pyplot(fig_age); plt.close(fig_age)
+    st.caption("**Nom** : histogramme superposé + boxplot âge/target. **Utilité** : voir si l'âge sépare les classes. **Lecture** : histogramme = distribution ; boxplot = médiane/quartiles/outliers. **Interprétation** : malades légèrement plus âgés, fort chevauchement => âge informatif mais pas suffisant seul.")
+
+    # numeric boxplots
+    NUM = ["age","trestbps","chol","thalch","oldpeak","ca"]
+    fig_b, axes_b = plt.subplots(2,3,figsize=(13,6))
+    for ax,col in zip(axes_b.ravel(), NUM):
+        sns.boxplot(data=df, x='target', y=col, ax=ax, palette=['#4C78A8','#E45756'])
+        ax.set_title(col); ax.set_xticks([0,1]); ax.set_xticklabels(['Sain','Malade'])
+    plt.tight_layout(); st.pyplot(fig_b); plt.close(fig_b)
+    st.caption("**Nom** : boxplots numériques par cible. **Utilité** : comparer médiane, dispersion, outliers entre sains/malades. **Lecture** : boîte=Q1-Q3, trait=médiane, points=outliers. **Interprétation** : `thalch` plus bas chez malades, `oldpeak/ca` plus élevés ; `chol/trestbps` se chevauchent beaucoup.")
+
+    # categorical rates
+    CAT = ["sex","cp","fbs","restecg","exang","slope","thal"]
+    fig_c, axes_c = plt.subplots(2,4,figsize=(15,6))
+    for ax,col in zip(axes_c.ravel(), CAT):
+        tmp = df.copy(); tmp[col]=tmp[col].astype(str).where(tmp[col].notna(), np.nan)
+        sns.barplot(data=tmp, x=col, y='target', ax=ax, errorbar=None, color='#72B7B2')
+        ax.set_title(col); ax.set_ylabel('Taux maladie'); ax.tick_params(axis='x', rotation=25)
+    axes_c.ravel()[-1].axis('off')
+    plt.tight_layout(); st.pyplot(fig_c); plt.close(fig_c)
+    st.caption("**Nom** : barplots taux de maladie par catégorie. **Utilité** : identifier modalités à risque. **Lecture** : hauteur = proportion de malades dans la modalité. **Interprétation** : `cp asymptomatic`, `exang True`, `thal reversable/fixed defect`, `slope flat/downsloping` associés à taux de maladie plus élevé.")
+
+    # --- Step 5 correlation ---
     st.subheader("Étape 5 — Étude de corrélation")
     st.markdown("""
-**Pourquoi ?** Mesurer le lien linéaire entre variables numériques et cible, détecter redondance, orienter l'interprétation.
-
-**Comment lire la heatmap :**
-- Valeur entre **-1 et +1**.
-- **+1** : les deux variables augmentent ensemble.
-- **-1** : quand l'une augmente, l'autre baisse.
-- **0** : pas de relation linéaire claire.
-- **Diagonale = 1** : corrélation d'une variable avec elle-même.
-- Règle pratique : |r| < 0.3 faible, 0.3-0.7 modérée, >0.7 forte.
-
-**Attention :** corrélation ≠ causalité ; ne capte que le linéaire.
+**Utilité** : mesurer lien linéaire entre variables numériques et avec `target` ; détecter redondance.
+**Comment lire** : valeur -1 à +1 ; proche +1 même sens, -1 sens inverse, 0 pas de lien linéaire ; diagonale = 1.
+**Limite** : corrélation ≠ causalité, linéaire seulement.
 """)
     fig_corr, corr = correlation_figure(df)
-    st.pyplot(fig_corr)
-    plt.close(fig_corr)
+    st.pyplot(fig_corr); plt.close(fig_corr)
     tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
-    st.write("Corrélation avec la cible (triée par importance absolue):")
     st.dataframe(tc.rename("corr_avec_target").to_frame(), use_container_width=True)
-    st.info("Interprétation : `ca`, `oldpeak` positifs ; `thalch` négatif ; `chol`/`trestbps` faibles. `ca` est calculé sur peu de valeurs (beaucoup de NA).")
+    st.caption("**Interprétation** : `ca` (+0.46), `oldpeak` (+0.39), `thalch` (-0.39) sont les plus liés à target ; `chol/trestbps` faibles. `ca` a beaucoup de NA, corrélation à interpréter avec prudence.")
 
-    st.subheader("Étape 6 — Features, split, modèles")
+    # --- Step 6 split/models ---
+    st.subheader("Étape 6 — Split, pipeline, modèles")
     st.markdown("""
-- **Features** : variables numériques + catégorielles (sauf `id`, `dataset`, `num`, `target`).
-- **Split** : 80% train / 20% test, `stratify=y`, `random_state=42`.
-- **Pourquoi stratify ?** garder la même proportion malades/sains.
-- **Modèles comparés** : Baseline, Régression logistique, Arbre, KNN, Random Forest.
-- **Random Forest (pourquoi/arguments)** : ensemble d'arbres qui votent, capture non-linéarités/interactions, robuste. Ex. `n_estimators=300` (300 arbres), `min_samples_leaf=3` (évite feuilles trop petites/sur-apprentissage), `random_state=42` (reproductible).
+- **Split** : 80% train / 20% test, `stratify=y`, `random_state=42`. **Utilité** : tester généralisation sur données jamais vues.
+- **Pipeline anti-fuite** : imputation + encoding + scaling dans `ColumnTransformer/Pipeline`, fit sur train.
+- **Modèles** : Baseline (référence), Régression logistique (simple/interprétable), Arbre (règles), KNN (voisins), Random Forest (ensemble d'arbres).
+- **Pourquoi Random Forest ?** Robuste, capture non-linéarités/interactions, moins sensible au bruit ; `n_estimators=300`, `min_samples_leaf=3`, `random_state=42`.
 """)
 
-    st.subheader("Étape 7 — Évaluation : R², MAE, MSE, Recall etc.")
+    # --- Step 7 evaluation ---
+    st.subheader("Étape 7 — Évaluation (VIC + classification)")
     st.markdown("""
-**Métriques demandées VIC :**
-- **R² (coefficient de détermination)** : 1 - SS_res/SS_tot. 1 parfait, 0 = modèle naïf (moyenne), <0 pire. En classification, on le rapporte sur probabilité et on l'explique avec prudence.
-- **MAE (Mean Absolute Error)** : moyenne des |erreur|. Plus bas = mieux. Facile à lire : erreur moyenne.
-- **MSE (Mean Squared Error)** : moyenne des erreurs². Pénalise fortement les grosses erreurs.
+| Métrique | Définition simple | Comment lire | Dans notre cas |
+|---|---|---|---|
+| **MAE** | Erreur absolue moyenne | plus bas = mieux | exigence VIC, rapportée sur probabilité/classe |
+| **MSE** | Erreur quadratique moyenne | pénalise grosses erreurs | exigence VIC |
+| **R²** | Part de variance expliquée | 1 bon, 0 naïf, <0 mauvais | exigence VIC ; prudence en classification |
+| **Recall** | Vrais malades détectés / vrais malades | proche 1 = peu de malades manqués | **prioritaire en pré-dépistage** |
+| **Precision** | Vrais malades parmi prédits malades | proche 1 = peu de fausses alertes | compromis avec recall |
+| **AUC** | Séparation sain/malade tous seuils | 0.5 hasard, 1 parfait | mesure globale |
 
-**Métriques classification (importantes ici) :**
-- **Accuracy** : % correct global. Peut tromper si déséquilibre.
-- **Precision** : parmi les prédits malades, combien sont vraiment malades.
-- **Recall (Rappel / Sensibilité)** : parmi les vrais malades, combien sont détectés. **Le plus important dans notre cas de pré-dépistage** car manquer un malade (faux négatif) est grave.
-- **F1** : compromis précision/rappel.
-- **AUC** : capacité à séparer sain/malade sur tous les seuils (0.5 hasard, 1 parfait).
+**Pourquoi recall prioritaire ?** Faux négatif = malade non détecté, risque grave. On accepte plus de fausses alertes en pré-dépistage.
+""")
 
-**Pourquoi Recall prioritaire ?** En pré-dépistage, un faux négatif = malade non détecté. On accepte plus de fausses alertes pour réduire les malades manqués (ajustement du seuil).
-
-**Étape 8 — Export pour l'application (joblib/json)**
-- **Pourquoi exporter ?** Pour que l'app Streamlit utilise le modèle entraîné sans réentraîner à chaque clic.
-- **`model.joblib`** : contient le pipeline entraîné (prétraitement + modèle).
-- **`model_meta.json`** : contient les métadonnées nécessaires au formulaire et à la décision (seuil calculé, bornes min/max/médiane, catégories, citation source).
-- **Important** : le seuil sauvegardé doit provenir de l'évaluation (validation croisée/train), pas être écrit à la main.
+    st.subheader("Étape 8 — Seuil de décision, export, app")
+    st.markdown("""
+- **Seuil** : transforme probabilité en décision. Calculé sur validation croisée train (objectif rappel ≥ 90%), puis appliqué au test. Pas un chiffre fixe arbitraire.
+- **Export** : `model.joblib` + `model_meta.json` sauvegardent pipeline et métadonnées pour que Streamlit prédise sans réentraîner.
+- **App** : formulaire → mêmes features → pipeline → probabilité → comparaison 3 modèles → verdict avec validation humaine.
 """)
 
 # -------------------- PAGE 3 --------------------
