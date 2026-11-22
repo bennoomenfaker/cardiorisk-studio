@@ -720,55 +720,126 @@ for nom, vals in SCENARIOS.items():
                 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
                 from sklearn.compose import ColumnTransformer
                 from sklearn.pipeline import Pipeline
-                from sklearn.impute import SimpleImputer
+                from sklearn.impute import SimpleImputer, KNNImputer
                 from sklearn.preprocessing import OneHotEncoder, StandardScaler
                 from sklearn.ensemble import RandomForestClassifier
                 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-                RS=42
-                dfm=pd.read_csv(DATA_PATH).copy()
-                dfm.loc[dfm['chol']==0,'chol']=np.nan; dfm.loc[dfm['trestbps']==0,'trestbps']=np.nan
-                dfm['target']=(dfm['num']>0).astype(int)
-                NUM_ALL=['age','trestbps','chol','thalch','oldpeak','ca']; CAT_ALL=['sex','cp','fbs','restecg','exang','slope','thal']
-                for c in CAT_ALL: dfm[c]=dfm[c].astype(str).where(dfm[c].notna(), np.nan)
-                X=dfm[NUM_ALL+CAT_ALL].copy(); y=dfm['target']
-                Xtr,Xte,ytr,yte=train_test_split(X,y,test_size=0.2,stratify=y,random_state=RS)
-                cv=StratifiedKFold(n_splits=5,shuffle=True,random_state=RS)
-                def preproc(num_cols,cat_cols):
-                    return ColumnTransformer([('num',Pipeline([('imp',SimpleImputer(strategy='median')),('sc',StandardScaler())]),num_cols),('cat',Pipeline([('imp',SimpleImputer(strategy='most_frequent')),('oh',OneHotEncoder(handle_unknown='ignore'))]),cat_cols)])
-                def evalp(pipe,Xtr,ytr,Xte,yte):
-                    pipe.fit(Xtr,ytr); pred=pipe.predict(Xte); proba=pipe.predict_proba(Xte)[:,1]
-                    out={'Accuracy':accuracy_score(yte,pred),'Precision':precision_score(yte,pred,zero_division=0),'Recall':recall_score(yte,pred,zero_division=0),'F1-Score':f1_score(yte,pred,zero_division=0),'ROC-AUC':roc_auc_score(yte,proba)}
-                    sc=cross_validate(Pipeline(pipe.steps), pd.concat([Xtr,Xte]), pd.concat([ytr,yte]), cv=cv, scoring={'ROC-AUC':'roc_auc'}, n_jobs=-1)
-                    out['CV ROC-AUC']=float(sc['test_ROC-AUC'].mean()); return out
-                # Exp1
-                Xtr1,Xte1=Xtr.drop(columns=['ca','thal']),Xte.drop(columns=['ca','thal'])
-                m1=evalp(Pipeline([('pre',preproc([c for c in NUM_ALL if c!='ca'],[c for c in CAT_ALL if c!='thal'])),('rf',RandomForestClassifier(n_estimators=300,random_state=RS,n_jobs=-1))]),Xtr1,ytr,Xte1,yte)
-                # Exp2
-                m2=evalp(Pipeline([('pre',preproc(NUM_ALL,CAT_ALL)),('rf',RandomForestClassifier(n_estimators=300,random_state=RS,n_jobs=-1))]),Xtr.copy(),ytr,Xte.copy(),yte)
-                # Exp3
-                Xtr3,Xte3=Xtr.copy(),Xte.copy()
-                for d in [Xtr3,Xte3]: d['ca_missing']=d['ca'].isna().astype(int); d['thal_missing']=d['thal'].isna().astype(int)
-                imp_num=['age','trestbps','chol','thalch','oldpeak']; imp_cat=['sex','cp','fbs','restecg','exang','slope']
-                imp_pre=ColumnTransformer([('num',SimpleImputer(strategy='median'),imp_num),('cat',Pipeline([('imp',SimpleImputer(strategy='most_frequent')),('oh',OneHotEncoder(handle_unknown='ignore'))]),imp_cat)])
-                imp_pre.fit(Xtr3[imp_num+imp_cat])
-                Xtr_imp=imp_pre.transform(Xtr3[imp_num+imp_cat]); Xte_imp=imp_pre.transform(Xte3[imp_num+imp_cat])
-                ca_known=Xtr3['ca'].notna(); rf_ca=RandomForestClassifier(n_estimators=300,random_state=RS,n_jobs=-1)
-                rf_ca.fit(Xtr_imp[ca_known.values], Xtr3.loc[ca_known,'ca'].astype(float).astype(int).astype(str))
-                for d,Xi in [(Xtr3,Xtr_imp),(Xte3,Xte_imp)]:
-                    mask=d['ca'].isna();
-                    if mask.any(): d.loc[mask,'ca']=rf_ca.predict(Xi[mask.values]).astype(float)
-                th_known=Xtr3['thal'].notna(); rf_th=RandomForestClassifier(n_estimators=300,random_state=RS,n_jobs=-1)
-                rf_th.fit(Xtr_imp[th_known.values], Xtr3.loc[th_known,'thal'].astype(str))
-                for d,Xi in [(Xtr3,Xtr_imp),(Xte3,Xte_imp)]:
-                    mask=d['thal'].isna();
-                    if mask.any(): d.loc[mask,'thal']=rf_th.predict(Xi[mask.values])
-                m3=evalp(Pipeline([('pre',preproc(NUM_ALL+['ca_missing','thal_missing'],CAT_ALL)),('rf',RandomForestClassifier(n_estimators=300,random_state=RS,n_jobs=-1))]),Xtr3,ytr,Xte3,yte)
-                return pd.DataFrame({'Exp 1 - Suppression ca,thal':m1,'Exp 2 - Médiane/mode (baseline)':m2,'Exp 3 - RF Imputation + indicateurs':m3}).T.round(4)
+                RS = 42
+                dfm = pd.read_csv(DATA_PATH).copy()
+                dfm.loc[dfm['chol'] == 0, 'chol'] = np.nan
+                dfm.loc[dfm['trestbps'] == 0, 'trestbps'] = np.nan
+                dfm['target'] = (dfm['num'] > 0).astype(int)
+                NUM_ALL = ['age', 'trestbps', 'chol', 'thalch', 'oldpeak', 'ca']
+                CAT_ALL = ['sex', 'cp', 'fbs', 'restecg', 'exang', 'slope', 'thal']
+                for c in CAT_ALL:
+                    dfm[c] = dfm[c].astype(str).where(dfm[c].notna(), np.nan)
+                X = dfm[NUM_ALL + CAT_ALL].copy()
+                y = dfm['target']
+                Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, stratify=y, random_state=RS)
+                cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RS)
+
+                def preproc(num_cols, cat_cols):
+                    return ColumnTransformer([
+                        ('num', Pipeline([('imp', SimpleImputer(strategy='median', add_indicator=True)), ('sc', StandardScaler())]), num_cols),
+                        ('cat', Pipeline([('imp', SimpleImputer(strategy='most_frequent')), ('oh', OneHotEncoder(handle_unknown='ignore'))]), cat_cols),
+                    ])
+
+                def evalp(pipe, Xtr, ytr, Xte, yte):
+                    pipe.fit(Xtr, ytr)
+                    pred = pipe.predict(Xte)
+                    proba = pipe.predict_proba(Xte)[:, 1]
+                    return {
+                        'Accuracy': accuracy_score(yte, pred),
+                        'Precision': precision_score(yte, pred, zero_division=0),
+                        'Recall': recall_score(yte, pred, zero_division=0),
+                        'F1-Score': f1_score(yte, pred, zero_division=0),
+                        'ROC-AUC': roc_auc_score(yte, proba),
+                    }
+
+                def cv_pipe(pipe, Xcv, ycv):
+                    sc = cross_validate(pipe, Xcv, ycv, cv=cv,
+                                        scoring={'Accuracy': 'accuracy', 'Precision': 'precision', 'Recall': 'recall', 'F1': 'f1', 'ROC-AUC': 'roc_auc'},
+                                        n_jobs=-1)
+                    return {f'CV {k}': float(sc[f'test_{k}'].mean()) for k in ['Accuracy', 'Precision', 'Recall', 'F1', 'ROC-AUC']}
+
+                # Exp 1 — supprimer ca et thal
+                Xtr1, Xte1 = Xtr.drop(columns=['ca', 'thal']), Xte.drop(columns=['ca', 'thal'])
+                num1 = [c for c in NUM_ALL if c != 'ca']
+                cat1 = [c for c in CAT_ALL if c != 'thal']
+                m1 = evalp(Pipeline([('pre', preproc(num1, cat1)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr1, ytr, Xte1, yte)
+                m1.update(cv_pipe(Pipeline([('pre', preproc(num1, cat1)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr1, ytr))
+
+                # Exp 2 — médiane / mode (baseline)
+                m2 = evalp(Pipeline([('pre', preproc(NUM_ALL, CAT_ALL)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr.copy(), ytr, Xte.copy(), yte)
+                m2.update(cv_pipe(Pipeline([('pre', preproc(NUM_ALL, CAT_ALL)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr, ytr))
+
+                # Exp 3 — patient similaire (KNN)
+                THAL_MAP = {'normal': 0, 'fixed defect': 1, 'reversable defect': 2}
+                THAL_INV = {v: k for k, v in THAL_MAP.items()}
+                SIM_NUM = [c for c in NUM_ALL if c != 'ca']
+                SIM_CAT = [c for c in CAT_ALL if c != 'thal']
+
+                def impute_similarity(X_fit, X_apply, n_neighbors=5):
+                    num_imp = SimpleImputer(strategy='median').fit(X_fit[SIM_NUM])
+                    cat_fill = X_fit[SIM_CAT].mode(dropna=True).iloc[0]
+                    ohe = OneHotEncoder(handle_unknown='ignore', sparse_output=False).fit(X_fit[SIM_CAT].fillna(cat_fill))
+
+                    def build(df):
+                        num = pd.DataFrame(num_imp.transform(df[SIM_NUM]), columns=SIM_NUM, index=df.index)
+                        cat = pd.DataFrame(ohe.transform(df[SIM_CAT].fillna(cat_fill)), columns=ohe.get_feature_names_out(SIM_CAT), index=df.index)
+                        ca = df[['ca']].astype(float)
+                        thal = df['thal'].map(THAL_MAP).rename('thal_code').to_frame()
+                        return pd.concat([num, cat, ca, thal], axis=1)
+
+                    A_fit = build(X_fit)
+                    A_apply = build(X_apply)
+                    knn = KNNImputer(n_neighbors=n_neighbors, weights='uniform').fit(A_fit)
+                    A_fit_imp = pd.DataFrame(knn.transform(A_fit), columns=A_fit.columns, index=A_fit.index)
+                    A_apply_imp = pd.DataFrame(knn.transform(A_apply), columns=A_apply.columns, index=A_apply.index)
+
+                    def restore(df_orig, A_imp):
+                        out = df_orig.copy()
+                        out['ca'] = A_imp['ca'].round().clip(0, 3).astype(float)
+                        codes = A_imp['thal_code'].round().clip(0, 2).astype(int)
+                        out['thal'] = codes.map(THAL_INV)
+                        out['ca_missing'] = df_orig['ca'].isna().astype(int)
+                        out['thal_missing'] = df_orig['thal'].isna().astype(int)
+                        return out
+
+                    return restore(X_fit, A_fit_imp), restore(X_apply, A_apply_imp)
+
+                def cv_similarity(Xcv, ycv):
+                    rows = []
+                    for tr_idx, va_idx in cv.split(Xcv, ycv):
+                        Xtr_imp, Xva_imp = impute_similarity(Xcv.iloc[tr_idx], Xcv.iloc[va_idx])
+                        pipe = Pipeline([('pre', preproc(NUM_ALL + ['ca_missing', 'thal_missing'], CAT_ALL)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))])
+                        pipe.fit(Xtr_imp, ycv.iloc[tr_idx])
+                        pred = pipe.predict(Xva_imp)
+                        proba = pipe.predict_proba(Xva_imp)[:, 1]
+                        rows.append({
+                            'Accuracy': accuracy_score(ycv.iloc[va_idx], pred),
+                            'Precision': precision_score(ycv.iloc[va_idx], pred, zero_division=0),
+                            'Recall': recall_score(ycv.iloc[va_idx], pred, zero_division=0),
+                            'F1-Score': f1_score(ycv.iloc[va_idx], pred, zero_division=0),
+                            'ROC-AUC': roc_auc_score(ycv.iloc[va_idx], proba),
+                        })
+                    cv_table = pd.DataFrame(rows).rename(columns={'F1-Score': 'F1'})
+                    return {f'CV {k}': float(cv_table[k].mean()) for k in ['Accuracy', 'Precision', 'Recall', 'F1', 'ROC-AUC']}
+
+                Xtr3, Xte3 = impute_similarity(Xtr, Xte)
+                m3 = evalp(Pipeline([('pre', preproc(NUM_ALL + ['ca_missing', 'thal_missing'], CAT_ALL)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr3, ytr, Xte3, yte)
+                m3.update(cv_similarity(Xtr, ytr))
+
+                return pd.DataFrame({
+                    'Exp 1 - Suppression ca,thal': m1,
+                    'Exp 2 - Médiane/mode (baseline)': m2,
+                    'Exp 3 - Patient similaire (KNN)': m3,
+                }).T.round(4)
             try:
                 cmp_na = compare_missing_strategies()
                 st.dataframe(cmp_na, use_container_width=True)
                 best_na = cmp_na['ROC-AUC'].astype(float).idxmax()
-                st.success(f"**Meilleure stratégie selon ROC-AUC test** : {best_na}. (Même split, même RandomForest final, random_state=42, CV 5-fold ROC-AUC affichée)")
+                st.success(f"**Meilleure stratégie selon ROC-AUC test** : {best_na}. (Même split, même RandomForest, CV 5-fold ; imputation KNN refaite dans chaque pli)")
             except Exception as e:
                 st.caption(f"Comparaison indisponible: {e}")
             # scatter réel vs prédit for best_recall model
