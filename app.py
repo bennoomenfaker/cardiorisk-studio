@@ -45,10 +45,11 @@ FIELD_INFO = {
 
 # Force du lien avec la maladie (Phase 7.4 du notebook) : sert à expliquer quels champs font bouger le verdict
 INFLUENCE = {
-    "cp": "forte (0,538)", "thal": "forte (0,497)", "exang": "forte (0,461)", "ca": "forte (0,456)",
-    "thalch": "modérée (0,393)", "oldpeak": "modérée (0,386)", "slope": "modérée (0,377)",
-    "sex": "modérée (0,304)", "age": "modérée (0,282)",
-    "fbs": "faible (0,139)", "chol": "faible (0,119)", "trestbps": "faible (0,115)", "restecg": "faible (0,100)",
+    "cp": "très forte (+0,064 AUC)", "chol": "forte (+0,035)", "oldpeak": "forte (+0,027)",
+    "thal": "moyenne (+0,015)", "ca": "moyenne (+0,014)", "sex": "moyenne (+0,011)",
+    "exang": "moyenne (+0,010)", "trestbps": "moyenne (+0,008)", "thalch": "moyenne (+0,006)",
+    "fbs": "faible (+0,004)", "age": "très faible (+0,000)", "slope": "très faible (−0,001)",
+    "restecg": "très faible (−0,001)",
 }
 
 # Deux profils cliniques réels pour la démonstration (un malade, un sain)
@@ -236,68 +237,6 @@ def correlation_figure(df: pd.DataFrame):
     ax.set_title("Matrice de corrélation (variables numériques + cible)")
     fig.tight_layout()
     return fig, corr
-
-
-def _cramers_v(x, y):
-    """V de Cramér (0 à 1) calculé sur la table de contingence, sans coder les modalités en nombres."""
-    tab = pd.crosstab(x, y)
-    if tab.empty or min(tab.shape) < 2:
-        return np.nan
-    obs = tab.to_numpy(); n = obs.sum()
-    exp = np.outer(obs.sum(axis=1), obs.sum(axis=0)) / n
-    phi2 = ((obs - exp) ** 2 / exp).sum() / n
-    r, k = tab.shape
-    phi2_c = max(0.0, phi2 - ((k - 1) * (r - 1)) / (n - 1))
-    r_c = r - ((r - 1) ** 2) / (n - 1)
-    k_c = k - ((k - 1) ** 2) / (n - 1)
-    denom = min(k_c - 1, r_c - 1)
-    return float(np.sqrt(phi2_c / denom)) if denom > 0 else np.nan
-
-
-def _eta(cat, num):
-    """Rapport de corrélation eta (0 à 1) : part de variance du numérique portée par les groupes de la catégorie."""
-    d = pd.DataFrame({"groupe": cat, "valeur": num}).dropna()
-    if d["groupe"].nunique() < 2 or d["valeur"].nunique() < 2:
-        return np.nan
-    g = d.groupby("groupe")["valeur"]
-    ss_inter = (g.count() * (g.mean() - d["valeur"].mean()) ** 2).sum()
-    ss_total = ((d["valeur"] - d["valeur"].mean()) ** 2).sum()
-    return float(np.sqrt(ss_inter / ss_total)) if ss_total > 0 else np.nan
-
-
-@st.cache_data
-def corr_cat_figure(df: pd.DataFrame):
-    cat = [c for c in meta["cat"] if c in df.columns]
-    mat = pd.DataFrame([[1.0 if a == b else _cramers_v(df[a], df[b]) for b in cat] for a in cat], index=cat, columns=cat)
-    fig, ax = plt.subplots(figsize=(7.5, 6))
-    sns.heatmap(mat, annot=True, fmt=".2f", cmap="Blues", vmin=0, vmax=1, ax=ax)
-    ax.set_title("V de Cramér — catégorielle × catégorielle")
-    fig.tight_layout()
-    return fig, mat
-
-
-@st.cache_data
-def assoc_mixte_figure(df: pd.DataFrame):
-    num = [c for c in meta["num"] if c in df.columns]
-    cat = [c for c in meta["cat"] if c in df.columns]
-    mat = pd.DataFrame([[_eta(df[c], df[n]) for c in cat] for n in num], index=num, columns=cat)
-    fig, ax = plt.subplots(figsize=(9, 5.5))
-    sns.heatmap(mat, annot=True, fmt=".2f", cmap="Blues", vmin=0, vmax=1, ax=ax)
-    ax.set_title("eta (η) — numérique × catégorielle")
-    fig.tight_layout()
-    return fig, mat
-
-
-@st.cache_data
-def lien_cible_table(df: pd.DataFrame):
-    num = [c for c in meta["num"] if c in df.columns]
-    cat = [c for c in meta["cat"] if c in df.columns]
-    rows = []
-    for c in num + cat:
-        a = abs(df[[c, "target"]].corr().iloc[0, 1]) if c in num else _cramers_v(df[c], df["target"])
-        rows.append({"Variable": c, "Mesure": "|Pearson|" if c in num else "V de Cramér",
-                     "Association": round(float(a), 3), "Patients utilisés": int(df[c].notna().sum())})
-    return pd.DataFrame(rows).sort_values("Association", ascending=False).reset_index(drop=True)
 
 
 @st.cache_data
@@ -503,7 +442,7 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
         ("4", "Cible et familles de variables", "`num` (0–4) → `target` binaire ; listes `NUM` / `CAT`", "target 0/1"),
         ("5", "Valeurs aberrantes (IQR)", "détecter, interpréter, décider — aucune suppression à l'aveugle (nettoyage)", "tableau de décision"),
         ("6", "Analyse visuelle", "distributions, boxplots par classe, taux de maladie par modalité", "figures + lectures"),
-        ("7", "Associations en 3 blocs", "7.1 Pearson (num×num) · 7.2 V de Cramér (cat×cat) · 7.3 eta (num×cat) · 7.4 lien avec target", "3 matrices + taux"),
+        ("7", "Corrélation & taux de malades", "7.1 Pearson (numériques + cible) · 7.2 taux de malades par modalité", "heatmap + tableau"),
         ("8", "Séparation Train / Test", "80/20 stratifié, `random_state=42`", "734 / 184"),
         ("9", "Préparation (Pipeline)", "médiane, mode, `StandardScaler`, `OneHotEncoder` — `fit` sur le train", "30 colonnes"),
         ("10", "3 stratégies de valeurs manquantes", "suppression / médiane-mode / patient similaire (KNN) sur `ca` et `thal`", "comparatif CV"),
@@ -672,35 +611,33 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
     show_fig(fig_c, "**Nom** : barplots du taux de maladie par catégorie. **Utilité** : identifier les modalités à risque. **Lecture** : hauteur = proportion de malades dans la modalité. **Interprétation** : `cp = asymptomatic`, `exang = True`, `thal` anormal, `slope` flat/downsloping sont associés à un taux de maladie plus élevé.")
 
     # --- Phase 7 ---
-    st.subheader("Phase 7 — Associations en 3 blocs séparés (pas de Pearson sur des catégories)")
+    st.subheader("Phase 7 — Corrélation de Pearson (numériques) et taux de malades (catégories)")
     st.markdown("""
 **Règle** : une seule mesure ne peut pas couvrir les trois situations. Un coefficient de Pearson sur `cp` codée 0-1-2-3 ne mesure que l'ordre de numérotation (démonstration faite dans le notebook). On sépare donc :
 
-| Bloc | Variables | Mesure | Encodage ? |
+| Étape | Variables | Méthode | Encodage ? |
 |---|---|---|---|
-| **7.1** | 6 numériques × 6 numériques | **r de Pearson** (−1 à +1) | non, ce sont des quantités |
-| **7.2** | 7 catégorielles × 7 catégorielles | **V de Cramér** (0 à 1) | non, modalités brutes |
-| **7.3** | 6 numériques × 7 catégorielles | **eta η** (0 à 1) | non, comparaison de moyennes |
-| **7.4** | les 13 variables × `target` | mesure adaptée au type + taux de malades | non |
+| **7.1** | 6 numériques + la cible | **corrélation de Pearson** (−1 à +1) | non, ce sont des quantités |
+| **7.2** | 7 catégories | **taux de malades par modalité** (pourcentage + effectif) | non, aucune conversion |
 """)
     with st.expander("Ce que je fais, pourquoi, et pourquoi pas du One-Hot avant le split"):
         st.markdown("""
-**Ce que je fais** : j'observe les variables **brutes**, sans les modifier, avec une mesure adaptée à chaque type de paire — Pearson (num × num), V de Cramér (cat × cat), eta (num × cat) — puis je classe les 13 variables par association avec `target` et je lis le sens dans les taux de malades par modalité.
+**Ce que je fais** : j'observe les variables **brutes**, sans les modifier — une **matrice de Pearson** sur les variables numériques (cible incluse), et pour chaque variable catégorielle le **pourcentage de malades dans chaque modalité**, avec l'effectif.
 
-**Pourquoi ce découpage** : une seule mesure ne peut pas couvrir les trois situations. Pearson suppose deux quantités avec une distance qui a un sens ; `cp` codée 0-1-2-3 n'en a pas (la démonstration du notebook donne −0,39, +0,47 ou −0,54 pour la même variable selon la numérotation). Le V de Cramér et eta travaillent sur les modalités brutes, sans leur inventer un ordre.
+**Pourquoi ce découpage** : Pearson compare des **écarts entre nombres** (5 ans d'écart = 5 ans). Une catégorie n'a ni ordre ni distance : `cp` codée 0-1-2-3 donnerait un coefficient qui change de signe selon l'ordre choisi. On ne calcule donc **aucun coefficient sur une catégorie** : on lit des proportions, qui ne dépendent d'aucun codage.
 
 **Pourquoi pas de `OneHotEncoder` avant le split** :
 
 | Raison | Explication |
 |---|---|
 | **Fuite de données** | l'encodeur apprend la liste des modalités sur les données qu'on lui donne ; appliqué avant `train_test_split`, il apprend des modalités présentes seulement dans le test. Il doit rester dans le `Pipeline` (Phase 9). |
-| **Statistiques faussées** | Pearson sur des colonnes 0/1 écrase les coefficients (rarement > 0,40 même pour un lien fort) et fabrique de **fausses corrélations négatives** entre modalités d'une même variable (`cp_asymptomatic` est anti-corrélé à `cp_non-anginal`, leur somme vaut 1). |
-| **Matrice illisible** | 13 variables → ~26 colonnes 0/1 : une matrice 26 × 26 inexploitable en soutenance. |
+| **Statistiques faussées** | encoder puis corréler crée des colonnes 0/1 qui se compensent (somme = 1) : les coefficients deviennent illisibles et négatifs par construction entre modalités d'une même variable. |
+| **Lisibilité** | 13 variables → ~26 colonnes 0/1 : le tableau des taux de malades est bien plus simple à défendre. |
 
-**La phrase à retenir** : *avant le split on observe les variables brutes avec l'outil adapté à chaque type ; après le split on transforme les catégorielles en One-Hot, appris sur `X_train` seulement.*
+**La phrase à retenir** : *avant le split on observe les variables brutes (Pearson pour les numériques, taux de malades pour les catégories) ; après le split on encode les catégorielles en One-Hot, appris sur `X_train` seulement.*
 """)
 
-    st.markdown("#### 7.1 — Numérique × numérique : Pearson")
+    st.markdown("#### 7.1 — Corrélation de Pearson (6 numériques + cible)")
     fig_corr, corr = correlation_figure(d)
     show_fig(fig_corr)
     corr_num = corr.drop(index="target", errors="ignore").drop(columns="target", errors="ignore")
@@ -712,26 +649,13 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
         pairs = corr_num.where(np.triu(np.ones(corr_num.shape, dtype=bool), k=1)).stack()
         pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(6)
         st.dataframe(pairs.rename("r (entre features)").to_frame(), use_container_width=True)
-    st.caption("**Interprétation 7.1** : paires les plus fortes `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282. **Aucune ne dépasse |r| = 0,40** : pas de redondance, on garde les 6 numériques. `age` est au centre de 4 paires : facteur de confusion classique. Pearson ne voit que le linéaire et ne doit jamais être calculé sur une catégorielle.")
+    st.caption("**Interprétation 7.1** : avec la maladie, `ca` **+0,456** (309 patients seulement), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, puis `chol` 0,119 et `trestbps` 0,115. Entre variables : `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282 — **aucune paire ne dépasse |r| = 0,40**, donc pas de redondance. `age` est au centre de 4 paires : facteur de confusion classique.")
 
-    st.markdown("#### 7.2 — Catégorielle × catégorielle : V de Cramér")
-    fig_cat, mat_cat = corr_cat_figure(d)
-    show_fig(fig_cat)
-    paires_cat = mat_cat.where(np.triu(np.ones(mat_cat.shape, dtype=bool), k=1)).stack().sort_values(ascending=False).head(6)
-    st.dataframe(paires_cat.rename("V de Cramér").to_frame(), use_container_width=True)
-    st.caption("**Interprétation 7.2** : `cp`–`exang` **0,447**, `sex`–`thal` 0,375, `exang`–`slope` 0,343, `exang`–`thal` 0,337. Toutes **sous 0,50** : associations modérées au plus, aucune redondance à supprimer. Ces quatre variables décrivent l'ischémie d'effort. Le V de Cramér dit « lié », pas « dans quel sens » : le sens se lit dans les taux par modalité (7.4).")
-
-    st.markdown("#### 7.3 — Numérique × catégorielle : eta (η)")
-    fig_eta, mat_eta = assoc_mixte_figure(d)
-    show_fig(fig_eta)
-    paires_eta = mat_eta.stack().sort_values(ascending=False).head(8)
-    st.dataframe(paires_eta.rename("eta").to_frame(), use_container_width=True)
-    st.caption("**Interprétation 7.3** : `oldpeak`–`slope` **0,421**, `thalch`–`slope` 0,410, `oldpeak`–`exang` 0,394, `thalch`–`cp` 0,372. η² ≤ 0,18 : les groupes expliquent au plus 18 % de la variance du numérique, donc signaux **modérés** et partiellement redondants (mesures de l'effort). Avec `chol` et `trestbps`, η ≤ 0,15.")
-
-    st.markdown("#### 7.4 — Lien de chaque variable avec `target`")
-    st.dataframe(lien_cible_table(d), use_container_width=True, hide_index=True)
+    st.markdown("#### 7.2 — Variables catégorielles : taux de malades par modalité")
     st.dataframe(taux_modalites_table(d), use_container_width=True, hide_index=True)
-    st.caption("**Interprétation 7.4** : le podium est **catégoriel** — `cp` 0,538, `thal` 0,497, `exang` 0,461 — avant `ca` 0,456, `thalch` 0,393, `oldpeak` 0,386. Sens médical : `cp = asymptomatic` **79 %** de malades (contre 13,9 % en atypical angina), `exang = True` 83,6 %, `thal` anormal ~76–80 % (contre 29,6 % si normal), `slope` flat/downsloping ~77 % (contre 38,4 % upsloping), homme 63,2 % contre 25,9 %. ⚠️ `ca` n'est calculé que sur **309 patients** et `thal` sur 434 : associations fragiles. `chol` (0,119) reste 2ᵉ en importance dans le modèle (Phase 15) : association faible ≠ variable inutile.")
+    st.caption("**Interprétation 7.2** : `cp = asymptomatic` **79,0 %** de malades contre **13,9 %** pour `atypical angina` · `exang = True` **83,6 %** contre 36,4 % · `thal` anormal **76–80 %** contre 29,6 % si `normal` · `slope` flat/downsloping **~77 %** contre 38,4 % en upsloping · homme **63,2 %** contre femme 25,9 % · `fbs` 68,1 % contre 49,0 % · `restecg` 51,5–65,7 %. Ces taux sont **descriptifs** : ils mélangent les 4 centres et ne prouvent pas un effet propre (c'est la Phase 15 qui départage les contributions). Aucun coefficient n'est calculé sur une catégorie.")
+
+    st.info("**Pourquoi pas de coefficient sur les catégories ?** Un coefficient compare des écarts entre nombres ; une catégorie n'en a pas. On lit donc des proportions, et l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` +0,064 d'AUC, `chol` 0,035, `oldpeak` 0,027.")
 
     # --- Phase 8 ---
     st.subheader("Phase 8 — Séparation Train / Test (avant tout apprentissage)")
@@ -964,7 +888,7 @@ proba = model.predict_proba(X_new)[:, 1]""", language="python")
 Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discrimination, et `ca` manquant à 66 % rend ses voisins peu informatifs. Les IC bootstrap se recoupent : on retient donc la médiane/mode pour sa **simplicité** et parce que c'est **elle qui est exportée** ici.
 """)
     st.markdown("""
-- **Q1 — Facteurs associés** (Phase 7, mesure adaptée au type) : côté **catégories** `cp` 0,538 · `thal` 0,497 · `exang` 0,461 · `slope` 0,377 · `sex` 0,304 ; côté **numériques** `ca` 0,456 · `thalch` 0,393 · `oldpeak` 0,386 · `age` 0,282. Sens : `cp = asymptomatic` 79 % de malades, `exang = True` 83,6 %, `thal` anormal ~76–80 %, `slope` flat/downsloping ~77 %.
+- **Q1 — Facteurs associés** (Phase 7) : côté **numériques** (Pearson) `ca` **+0,456** (309 patients), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, `chol` 0,119, `trestbps` 0,115. Côté **catégories**, taux de malades : `cp = asymptomatic` **79,0 %** contre 13,9 % en atypical, `exang = True` 83,6 %, `thal` anormal ~76–80 % contre 29,6 % si normal, `slope` flat/downsloping ~77 % contre 38,4 %, homme 63,2 % contre femme 25,9 %. Aucun coefficient n'est calculé sur une catégorie.
 - **Q2 — Variables les plus contributives** (permutation) : `cp` très loin devant, puis `chol`, `oldpeak`, `ca`, `exang`. `age` et `thalch` ressortent à ≈ 0 (information déjà portée par les autres variables).
 - **Q3 — Capacité prédictive** : AUC test **0,927** (CV 0,883), accuracy **0,848**, rappel 0,902 (baseline 0,55).
 - **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864) et arbre seul (0,804) ; aucune des 8 familles testées ne fait mieux.
@@ -1030,11 +954,14 @@ elif page.startswith("3"):
 
 | Force | Variables | Ce que ça veut dire en démo |
 |---|---|---|
-| **Forte** | `cp` (0,538) · `thal` (0,497) · `exang` (0,461) · `ca` (0,456) | ce sont **ces 4 champs** qu'il faut faire varier devant le prof : le verdict change visiblement |
+| **Très forte** | `cp` (+0,064 d'AUC) | changer ce seul champ fait basculer le verdict |
+| **Forte** | `chol` (+0,035) · `oldpeak` (+0,027) | effet net sur la probabilité |
+| Moyenne | `thal` · `ca` · `sex` · `exang` · `trestbps` · `thalch` | effet mesurable mais progressif |
+| Faible | `fbs` · `age` · `slope` · `restecg` | bouger ces champs seuls change peu la probabilité |
 | Modérée | `thalch` (0,393) · `oldpeak` (0,386) · `slope` (0,377) · `sex` (0,304) · `age` (0,282) | effet net mais plus progressif |
 | Faible | `fbs` (0,139) · `chol` (0,119) · `trestbps` (0,115) · `restecg` (0,100) | bouger ces champs seuls change **peu** la probabilité (mais ils comptent dans le modèle) |
 
-Le chiffre entre parenthèses = intensité de l'association avec la maladie (V de Cramér pour les catégories, |Pearson| pour les numériques).
+Le chiffre entre parenthèses = **importance par permutation** (Phase 15) : baisse d'AUC du modèle quand on mélange la variable. C'est la mesure de l'effet réel dans le modèle.
 """)
 
     with st.expander("Voir la fonction simple predire_scenario (style demandé, adapté CardioRisk binaire)"):
@@ -1372,69 +1299,116 @@ elif page.startswith("4"):
     render_notebook(NOTEBOOK_PRIORITY)
 
 else:
-    st.header("5) Soutenance VIC — la trame demandée par le prof")
+    st.header("5) Soutenance VIC — présentation du projet (12 points du prof)")
+    d = clean_data()
     st.markdown("""
-Cette page ne contient pas de nouveau calcul : elle **relie chaque point exigé** à ce qui existe déjà dans le projet, avec la phrase à dire et l'écran à montrer.
+Cette page **présente le travail tel qu'il sera défendu**, point par point, avec les **vrais résultats** de l'implémentation, des tableaux et des graphiques interprétés. Chaque nombre vient de `model.joblib` / `model_meta.json` et du notebook CardioRisk.
 """)
 
-    st.markdown("### La trame officielle, point par point")
-    show_table([
-        ("1. Contexte, objectifs, domaine", "Page 1 + notebook (A1)", "Pré-dépistage cardiaque : prioriser les patients à examiner ; pas un diagnostic.", "Le problème médical, le coût d'un malade manqué."),
-        ("2. Solutions et travaux existants", "Page 1 (veille) + notebooks Kaggle analysés", "Approches publiées sur le même jeu UCI (Cleveland, 4 centres).", "Le tableau comparatif des notebooks existants."),
-        ("3. Limites des solutions actuelles", "Page 1 + Phase 11bis", "LabelEncoder sur des nominales, suppression de lignes, pas de vrai test, aucune étude d'association.", "Les 3 corrections apportées (one-hot après split, test 184 patients, 3 blocs)."),
-        ("4. Formulation du problème", "Page 1 + Phase 4", "Classification binaire : `target = 1 si num > 0`, 13 variables explicatives.", "La cible et le split 734 / 184."),
-        ("5. Approche et valeur ajoutée", "Phases 7 à 13", "Trois blocs d'association + pipeline sans fuite + seuil piloté par le rappel.", "Le schéma des 18 phases (page 2)."),
-        ("6. Schéma global et flux", "Page 2 (phases 1→18)", "CSV → nettoyage → split → pipeline → modèle → seuil → app.", "La table des 18 phases, puis la page Prédiction."),
-        ("7. Données et prétraitement", "Phases 1 à 4, 8, 9", "920 lignes → 918 patients, 13 variables ; médiane/mode appris sur le train seulement.", "Le tableau « données » et le pipeline de la Phase 9."),
-        ("8. Justification du modèle", "Phase 11 + 11bis", "Régression logistique : meilleure AUC CV (0,883), explicable, 8 FN au seuil.", "Le tableau des 8 modèles comparés."),
-        ("9. Matrice de corrélation interprétée", "Phase 7 (3 blocs)", "Pearson (num×num), V de Cramér (cat×cat), eta (num×cat) puis classement vs cible.", "Voir la section ci-dessous : c'est LE point à préparer."),
-        ("10. Résultats et indicateurs", "Phase 12", "AUC 0,927 · accuracy 0,848 · rappel 0,902 (0,922 au seuil 0,41).", "La matrice de confusion chiffrée."),
-        ("11. R², MAE, MSE expliqués", "Phase 12 + conclusion finale", "R² 0,568 · MAE 0,2317 · MSE 0,1067 · RMSE 0,3267 (sur les probabilités).", "La table des métriques + le paragraphe « R² = 0,568 »."),
-        ("12. Tests sur nouvelles données, réel vs prédit, limites", "Phases 14 et 16", "Formulaire + graphique réel/prédit + calibration ; limites : 4 centres, `ca` 309 connus.", "Les deux graphiques réel vs prédit (page 14 du notebook) et la démo du formulaire."),
-    ], ["Point exigé", "Où c'est", "Ce que je dis", "Ce que je montre"])
-
-    st.markdown("### Le point délicat : Pearson, V de Cramér, eta — quoi montrer, quoi dire")
+    st.markdown("### 1. Contexte, objectifs et domaine")
     st.markdown("""
-**Idée à retenir** : il n'y a pas UNE corrélation. Il y a **trois mesures** parce qu'il y a **trois types de paires**. Ce n'est pas un choix esthétique, c'est une contrainte mathématique.
-
-| Ce que je montre | Ce que je dis (une phrase) | Pourquoi c'est vrai |
-|---|---|---|
-| **Heatmap 7.1** (6 numériques) | « Entre deux mesures, Pearson : la plus forte paire est `age`–`ca` = 0,37, donc pas de redondance. » | Pearson exige deux quantités, avec une distance qui a un sens (5 ans = 5 ans). |
-| **Heatmap 7.2** (7 catégories) | « Entre deux catégories, Pearson est interdit : `cp` codée 0-1-2-3 n'a ni ordre ni distance ; j'utilise le V de Cramér : `cp`–`exang` = 0,45. » | Le V de Cramér se calcule sur le **tableau de comptage**, sans aucun codage. |
-| **Heatmap 7.3** (num × cat) | « Entre une catégorie et une mesure, je compare les moyennes de groupes avec eta : `oldpeak`–`slope` = 0,42. » | eta = racine de la part de variance expliquée ; aucune catégorie n'est transformée en nombre. |
-| **Tableau 7.4** | « Avec la cible, j'utilise la mesure du type : `cp` 0,54, `thal` 0,50, `exang` 0,46 → **le signal le plus fort est catégoriel**. » | On ne mélange jamais deux mesures de nature différente. |
-
-**Si le prof demande « pourquoi pas juste Pearson ? »** : montrer la cellule de démonstration du notebook — la même variable `cp` donne **−0,39, +0,47 ou −0,54** selon l'ordre de numérotation. Un coefficient qui change de signe quand on renumérote ne mesure pas la maladie : il mesure le codage.
-
-**Si le prof demande « pourquoi pas de One-Hot avant ? »** : l'encodeur apprendrait des modalités du test (fuite), il écraserait les coefficients et créerait de fausses corrélations négatives entre modalités d'une même variable. Le One-Hot est fait **après le split, dans le pipeline**.
+- **Problème** : pré-dépistage cardiaque — prioriser les patients à examiner plus en détail, **pas un diagnostic**.
+- **Objectif** : prédire la présence d'une maladie cardiaque (`target = 1 si num > 0`) à partir de 13 variables cliniques.
+- **Valeur ajoutée** : un outil qui **ne rate pas les malades** (rappel élevé) et qui explique **pourquoi** (coefficient par variable).
 """)
 
-    st.markdown("### AUC, R², MAE, MSE, rappel : les mots simples")
-    show_table([
-        ("AUC", "Sur 100 couples (un malade + un sain) tirés au hasard, dans combien de cas le modèle donne la proba la plus haute au malade ?", "0,5 = hasard · 1 = parfait", "0,927 → 93 fois sur 100"),
-        ("Rappel", "Sur les malades, combien le modèle en détecte ?", "1 = aucun malade manqué", "0,902 → 92/102 (94/102 au seuil 0,41)"),
-        ("Précision", "Quand il dit « malade », combien le sont vraiment ?", "1 = aucune fausse alerte", "0,836"),
-        ("R²", "Part de la variation des étiquettes (0/1) expliquée par le modèle", "1 = parfait · 0 = pronostic constant", "0,568 (élevé pour du binaire)"),
-        ("MAE", "Écart moyen entre la probabilité prédite et la réalité (0 ou 1)", "plus bas = mieux", "0,2317"),
-        ("MSE / RMSE", "Erreur quadratique (pénalise les erreurs confiantes) et sa racine", "plus bas = mieux", "0,1067 / 0,3267"),
-    ], ["Métrique", "En mots simples", "Comment lire", "Notre valeur"])
+    st.markdown("### 2 & 3. Solutions existantes et leurs limites")
+    st.markdown("""
+- Travaux publiés sur le même jeu **UCI (Cleveland, 4 centres)** analysés.
+- **Limites corrigées** : `LabelEncoder` sur des nominales (faux ordre), suppression de lignes (perte d'information), pas de vrai test (fuite), aucune étude d'association.
+- **Corrections apportées** : One-Hot après le split, test de 184 patients jamais vus, étude d'association (Pearson + taux de malades).
+""")
+
+    st.markdown("### 4. Formulation du problème")
+    st.markdown("- **Classification binaire** : `target = 1 si num > 0`. **13 variables** explicatives (6 numériques + 7 catégorielles). **Split** : 734 patients train / 184 test.")
+
+    st.markdown("### 5 & 6. Approche et schéma global")
+    st.markdown("CSV → nettoyage → `train_test_split` → pipeline (imputation + scaling + one-hot) → modèle → seuil piloté par le rappel → application Streamlit. Voir la **page 2** pour la table des 18 phases.")
+
+    st.markdown("### 7. Données et prétraitement")
+    st.markdown("""
+- **920 lignes brutes → 918 patients** après suppression de 2 doublons exacts ; **13 variables** ; 4 centres (Cleveland, Hungary, Switzerland, VA).
+- **Valeurs manquantes** : `ca` (66 %), `thal` (53 %), `slope` (34 %), `chol` (3 %), `trestbps` (1 %).
+- **Imputation** : médiane (numériques) et mode (catégorielles), **apprises sur le train seulement** ; alternative « patient similaire (KNN) » testée et jugée **équivalente**.
+- **Zéros biologiquement impossibles** (`chol`, `trestbps`) → `NaN` avant imputation.
+""")
+
+    st.markdown("### 8. Justification du modèle")
+    st.markdown("""
+- **Régression logistique** : meilleure AUC en validation croisée (**0,883**) et sur le test (**0,927**), **8 malades manqués** au lieu de 13, et un **coefficient par variable** donc un discours clinique possible.
+- Comparé à 7 autres (Random Forest, KNN, arbre, SVM, Naïve Bayes, …) : voir la page 2 / Phase 11bis.
+- **Seuil** : 0,41 (calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %), au lieu de 0,50 par convention. Effet : 2 malades détectés en plus, 5 fausses alertes en plus.
+""")
+
+    st.markdown("### 9. Matrice de corrélation interprétée (Pearson + taux de malades)")
+    st.markdown("""
+**Principe** : il n'y a pas UNE corrélation. **Pearson** exige deux quantités avec une distance qui a un sens (5 ans = 5 ans). Une catégorie (`cp = asymptomatic`) n'a ni ordre ni distance : on **ne calcule aucun coefficient** sur elle, on lit le **pourcentage de malades par modalité**.
+""")
+    fig_corr, corr = correlation_figure(d)
+    show_fig(fig_corr)
+    tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
+    c71, c72 = st.columns(2)
+    with c71:
+        st.dataframe(tc.rename("r avec target").to_frame(), use_container_width=True)
+    with c72:
+        corr_num = corr.drop(index="target", errors="ignore").drop(columns="target", errors="ignore")
+        pairs = corr_num.where(np.triu(np.ones(corr_num.shape, dtype=bool), k=1)).stack()
+        pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(6)
+        st.dataframe(pairs.rename("r (entre features)").to_frame(), use_container_width=True)
+    st.caption("**Interprétation 7.1 (Pearson)** : avec la maladie, `ca` **+0,456** (309 patients), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, puis `chol` 0,119 et `trestbps` 0,115. Entre variables, `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282 — **aucune paire ne dépasse |r| = 0,40**, donc pas de redondance. `age` est au centre de 4 paires : facteur de confusion classique.")
+    st.dataframe(taux_modalites_table(d), use_container_width=True, hide_index=True)
+    st.caption("**Interprétation 7.2 (taux de malades)** : `cp = asymptomatic` **79,0 %** contre 13,9 % en atypical · `exang = True` **83,6 %** contre 36,4 % · `thal` anormal **76–80 %** contre 29,6 % si normal · `slope` flat/downsloping **~77 %** contre 38,4 % · homme **63,2 %** contre femme 25,9 %. Ces taux sont descriptifs (mélange des 4 centres) ; l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` +0,064 d'AUC, `chol` 0,035, `oldpeak` 0,027.")
+    st.info("**Si le prof demande « pourquoi pas juste Pearson ? »** : la même variable `cp` donne −0,39, +0,47 ou −0,54 selon l'ordre de numérotation. Un coefficient qui change de signe quand on renumérote ne mesure pas la maladie : il mesure le codage. **Pourquoi pas de One-Hot avant ?** : l'encodeur apprendrait des modalités du test (fuite), écraserait les coefficients et créerait de fausses corrélations. Le One-Hot est fait **après le split, dans le pipeline**.")
+
+    st.markdown("### 10. Résultats et indicateurs de performance")
+    st.markdown("""
+| Métrique | Valeur | Lecture |
+|---|---:|---|
+| **AUC (test)** | **0,9267** | 93 fois sur 100, le modèle donne la proba la plus haute au malade |
+| Accuracy | 0,8478 | 156 bons pronostics sur 184 |
+| Précision | 0,8364 | quand il dit « malade », 84 % le sont vraiment |
+| **Rappel** | **0,9020** | 92 malades sur 102 détectés (94 sur 102 au seuil 0,41) |
+| F1 | 0,8679 | compromis précision/rappel |
+| AUC (validation croisée, 5 plis) | 0,883 | stabilité du modèle |
+| **R²** | **0,5680** | part de la variation des étiquettes (0/1) expliquée |
+| **MAE** | **0,2317** | écart moyen entre proba prédite et réalité (0 ou 1) |
+| **MSE** | **0,1067** | erreur quadratique (pénalise les erreurs confiantes) |
+| RMSE | 0,3267 | racine de la MSE |
+""")
+    st.markdown("**Matrice de confusion (seuil 0,50)** : TP = 92 · TN = 64 · FP = 18 · FN = 10. Au seuil 0,41 : TP = 94 · TN = 59 · FP = 23 · FN = 8.")
     st.info("**À dire** : l'AUC dit si le modèle **classe** bien ; le rappel dit **combien de malades il rate** ; le R² dit **quelle part de l'information il capte**. En pré-dépistage, l'ordre de priorité est rappel → AUC → précision → R².")
 
-    st.markdown("### Les 6 questions que le jury va poser (et la réponse courte)")
+    st.markdown("### 11. R², MAE, MSE — explication")
     st.markdown("""
-1. **« Pourquoi la régression logistique ? »** → meilleure AUC en validation croisée (0,883) et sur le test (0,927), 8 malades manqués au lieu de 13, et un coefficient par variable donc un discours clinique possible.
-2. **« Pourquoi le seuil 0,41 et pas 0,50 ? »** → 0,50 est une convention ; 0,41 est calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %. Effet mesuré : 2 malades détectés en plus, 5 fausses alertes en plus.
+- **R² = 0,568** : le modèle explique **56,8 %** de la variation des étiquettes 0/1. Élevé pour du binaire (la cible est soit 0 soit 1, la variance est maximale).
+- **MAE = 0,2317** : en moyenne, la probabilité prédite s'écarte de **0,23** de la réalité (0 ou 1). Plus bas = mieux.
+- **MSE = 0,1067** (RMSE 0,3267) : pénalise les **erreurs confiantes** (une proba de 0,99 sur un sain coûte beaucoup). Complémentaire du MAE.
+- Ces métriques sont calculées **sur les probabilités**, pas sur les classes : elles documentent la **qualité des probabilités**, le rappel pilote la décision.
+""")
+
+    st.markdown("### 12. Tests sur nouvelles données, réel vs prédit, limites")
+    st.markdown("""
+- **Test** : 184 patients **jamais utilisés** avant l'évaluation finale (phase de test clairement distincte de l'entraînement).
+- **Réel vs prédit** : graphique des probabilités prédites selon la vraie classe (Phase 14 du notebook) + calibration par tranches (0–0,2 → 0,08/0,04 ; 0,2–0,4 → 0,29/0,28 ; 0,4–0,6 → 0,50/0,27 ; 0,6–0,8 → 0,67/0,73 ; 0,8–1 → 0,92/0,95).
+- **Limites** : 918 patients, 4 centres, `ca` connu pour 309 seulement, `thal` pour 434, données rétrospectives, probabilités non calibrées, risque de dérive.
+- **Perspectives** : validation externe, calibration des probabilités, suivi de dérive, collecte de `ca`/`thal`.
+""")
+
+    st.markdown("### Les 6 questions que le jury va poser")
+    st.markdown("""
+1. **« Pourquoi la régression logistique ? »** → meilleure AUC CV (0,883) et test (0,927), 8 malades manqués au lieu de 13, et un coefficient par variable donc un discours clinique possible.
+2. **« Pourquoi le seuil 0,41 et pas 0,50 ? »** → 0,50 est une convention ; 0,41 est calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %. Effet : 2 malades détectés en plus, 5 fausses alertes en plus.
 3. **« Comment évitez-vous la fuite de données ? »** → tout ce qui apprend (médiane, mode, scaling, one-hot) est **dans le pipeline**, ajusté sur `X_train` uniquement, refait à chaque pli de la validation croisée.
-4. **« Médiane ou patient similaire (KNN) ? »** → les deux se valent (rappel identique 0,902 ; R² 0,568 vs 0,574 ; IC contenant 0). La médiane est livrée pour sa simplicité et la transparence de ses valeurs ; le KNN moyenne des codes sur `thal`, ce qui produit 51 % de `fixed defect` contre 11 % en réalité.
+4. **« Médiane ou patient similaire (KNN) ? »** → les deux se valent (rappel identique 0,902 ; R² 0,568 vs 0,574 ; IC contenant 0). La médiane est livrée pour sa simplicité ; le KNN moyenne des codes sur `thal`, ce qui produit 51 % de `fixed defect` contre 11 % en réalité.
 5. **« R² ou rappel ? »** → le rappel pilote la décision (un malade manqué coûte plus qu'une fausse alerte) ; le R² documente la qualité des probabilités et répond à l'exigence du cours.
-6. **« Vos résultats sont-ils fiables ? »** → test de 184 patients **jamais utilisés** avant l'évaluation finale, IC bootstrap fournis, et limites explicites : 918 patients, 4 centres, `ca` connu pour 309 seulement, probabilités non calibrées.
+6. **« Vos résultats sont-ils fiables ? »** → test de 184 patients jamais utilisés, IC bootstrap fournis, et limites explicites (voir ci-dessus).
 """)
 
     st.markdown("### Trois erreurs à ne pas commettre en soutenance")
     st.markdown("""
-- **Ne pas dire « j'ai fait une matrice de corrélation »** en montrant la heatmap des 13 variables : dire « trois mesures adaptées à trois types de paires », sinon la question « Pearson sur `cp`, vraiment ? » arrive immédiatement.
+- **Ne pas dire « j'ai fait une matrice de corrélation »** en montrant la heatmap des 13 variables : dire « trois mesures adaptées à trois types de paires » (Pearson pour les numériques, taux de malades pour les catégories), sinon la question « Pearson sur `cp`, vraiment ? » arrive.
 - **Ne pas confondre accuracy et rappel** : 84,8 % d'accuracy peut cacher des malades manqués. Toujours montrer la matrice de confusion.
-- **Ne pas présenter le test comme un jeu d'entraînement** : le test est utilisé **une seule fois**, à la fin ; c'est écrit dans la Phase 12.
+- **Ne pas présenter le test comme un jeu d'entraînement** : le test est utilisé **une seule fois**, à la fin.
 """)
 
 st.sidebar.markdown("---")
