@@ -939,6 +939,32 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
 """)
     st.caption("Le détail complet (sorties, figures, interprétations) se trouve dans le notebook, page « 4. Notebook (prioritaire) ».")
 
+    st.markdown("### Conclusion finale — le verdict")
+    v1, v2, v3 = st.columns(3)
+    v1.metric("Modèle retenu", "Rég. logistique", "AUC test 0,927")
+    v2.metric("Valeurs manquantes", "Médiane / mode", "ROC-AUC 0,9133")
+    v3.metric("Seuil de dépistage", f"{float(meta['seuil']):.2f}".replace(".", ","), "rappel 0,92 — 8 FN / 102")
+    st.success("**Verdict** : régression logistique + imputation médiane/mode + seuil abaissé à 0,41. Sur 102 malades du test, **94 sont détectés et 8 manqués** ; sur 82 sains, 59 sont rassurés à juste titre et 23 reçoivent une fausse alerte. C'est le meilleur compromis de pré-dépistage, et le plus explicable cliniquement.")
+
+    st.markdown("**Matrice de confusion réelle (test : 184 patients = 82 sains + 102 malades)**")
+    st.dataframe(pd.DataFrame([
+        {"Seuil": "0,50 (convention)", "TN (sain→sain)": 64, "FP (sain→malade)": 18, "FN (malade→sain)": 10, "TP (malade→malade)": 92,
+         "Accuracy": 0.848, "Rappel": 0.902, "Spécificité": 0.780, "Précision": 0.836},
+        {"Seuil": "0,41 (retenu)", "TN (sain→sain)": 59, "FP (sain→malade)": 23, "FN (malade→sain)": 8, "TP (malade→malade)": 94,
+         "Accuracy": 0.832, "Rappel": 0.922, "Spécificité": 0.720, "Précision": 0.803},
+    ]), use_container_width=True, hide_index=True)
+    st.caption("**Lecture** : abaisser le seuil de 0,50 à 0,41 échange **2 malades manqués** (10 → 8) contre **5 fausses alertes** (18 → 23). En pré-dépistage c'est le bon sens : un FN rentre chez lui non dépisté, un FP passe un examen inutile. **TP+TN = 153/184** décisions correctes au seuil retenu ; **VPN = 0,881** (quand le modèle dit « sain », il a raison ~88 % du temps).")
+
+    st.markdown("**Métriques d'erreur et R² : ce qu'elles disent vraiment**")
+    st.dataframe(pd.DataFrame([
+        {"Métrique": "MAE", "Probabilité": 0.2317, "Classe 0/1": 0.1522, "Lecture": "écart moyen entre probabilité prédite et réalité"},
+        {"Métrique": "MSE", "Probabilité": 0.1067, "Classe 0/1": 0.1522, "Lecture": "pénalise les erreurs confiantes"},
+        {"Métrique": "RMSE", "Probabilité": 0.3267, "Classe 0/1": 0.3901, "Lecture": "même unité qu'une probabilité, donc lisible"},
+        {"Métrique": "R²", "Probabilité": 0.5680, "Classe 0/1": 0.3840, "Lecture": "57 % de la variance des étiquettes expliquée"},
+    ]), use_container_width=True, hide_index=True)
+    st.info("**R² = 0,568** : la cible est binaire, donc un R² ne peut pas approcher 1 ; 0,568 est **élevé** pour une classification (plafond pratique ≈ 0,6), et il prouve que le modèle fait bien mieux qu'un pronostic constant (R² = 0). Sur la classe prédite, MAE = MSE = 0,1522 = le taux d'erreur. Mais le R² **ne dit pas combien de malades ont été manqués** : il pèse un FN et un FP à égalité. D'où l'ordre de lecture retenu : **rappel → AUC → précision/F1 → R²/MAE/MSE/RMSE**.")
+    st.markdown("**Pourquoi ces choix** : régression logistique = meilleure AUC CV (0,883) et test (0,927), 8 FN au lieu de 13 ; médiane/mode = meilleur ROC-AUC test (0,9133 > KNN 0,9116 > suppression 0,8987) et stratégie réellement exportée ; KNN écarté parce que `ca` manque à 66 % (voisins calculés sur des valeurs déjà inventées) et que son avantage disparaît après standardisation ; suppression écartée car elle jette deux examens (−0,015 d'AUC).")
+
     with st.expander("Rappel — les 8 étapes génériques de tout projet ML"):
         ml_steps = [
             ("1. Collect data", "Collecter données", "CSV/DB/API, définir source et cible"),
