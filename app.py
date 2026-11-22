@@ -43,6 +43,28 @@ FIELD_INFO = {
     "thal": ("Thalassémie/scintigraphie", "Résultat examen perfusion/thalassémie."),
 }
 
+# Force du lien avec la maladie (Phase 7.4 du notebook) : sert à expliquer quels champs font bouger le verdict
+INFLUENCE = {
+    "cp": "forte (0,538)", "thal": "forte (0,497)", "exang": "forte (0,461)", "ca": "forte (0,456)",
+    "thalch": "modérée (0,393)", "oldpeak": "modérée (0,386)", "slope": "modérée (0,377)",
+    "sex": "modérée (0,304)", "age": "modérée (0,282)",
+    "fbs": "faible (0,139)", "chol": "faible (0,119)", "trestbps": "faible (0,115)", "restecg": "faible (0,100)",
+}
+
+# Deux profils cliniques réels pour la démonstration (un malade, un sain)
+EXEMPLES = {
+    "Patient type MALADE (profil à risque)": {
+        "age": 62, "trestbps": 150, "chol": 280, "thalch": 120, "oldpeak": 2.0, "ca": 2,
+        "sex": "Male", "cp": "asymptomatic", "fbs": "True", "restecg": "lv hypertrophy",
+        "exang": "True", "slope": "flat", "thal": "reversable defect",
+    },
+    "Patient type SAIN (profil rassurant)": {
+        "age": 45, "trestbps": 120, "chol": 200, "thalch": 165, "oldpeak": 0.0, "ca": 0,
+        "sex": "Female", "cp": "non-anginal", "fbs": "False", "restecg": "normal",
+        "exang": "False", "slope": "upsloping", "thal": "normal",
+    },
+}
+
 VAR_RANGES = {
     "age": {"lo": 18, "hi": 100, "unit": "années"},
     "trestbps": {"lo": 70, "hi": 250, "unit": "mm Hg"},
@@ -388,6 +410,7 @@ page = st.sidebar.radio(
         "2. Processus ML (18 phases)",
         "3. Prédiction / Verdict",
         "4. Notebook (prioritaire)",
+        "5. Soutenance VIC (plan du prof)",
     ],
 )
 st.sidebar.markdown("---")
@@ -994,8 +1017,25 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
 
 # -------------------- PAGE 3 --------------------
 elif page.startswith("3"):
+    # un exemple a-t-il été demandé au tour précédent ? (à appliquer AVANT de créer les widgets)
+    _pending = st.session_state.pop("_pending_example", None)
+    if _pending:
+        for _k, _v in _pending.items():
+            st.session_state[f"n_{_k}" if _k in meta["num"] else f"c_{_k}"] = _v
+
     st.header("3) Prédiction / Verdict final (formulaire)")
     st.markdown("Saisir les données patient. Les 3 modèles comparent la même entrée. **Aide à la décision, pas décision automatique.**")
+    st.markdown("""
+**Quels champs font vraiment bouger le verdict ?** (association mesurée dans la Phase 7.4)
+
+| Force | Variables | Ce que ça veut dire en démo |
+|---|---|---|
+| **Forte** | `cp` (0,538) · `thal` (0,497) · `exang` (0,461) · `ca` (0,456) | ce sont **ces 4 champs** qu'il faut faire varier devant le prof : le verdict change visiblement |
+| Modérée | `thalch` (0,393) · `oldpeak` (0,386) · `slope` (0,377) · `sex` (0,304) · `age` (0,282) | effet net mais plus progressif |
+| Faible | `fbs` (0,139) · `chol` (0,119) · `trestbps` (0,115) · `restecg` (0,100) | bouger ces champs seuls change **peu** la probabilité (mais ils comptent dans le modèle) |
+
+Le chiffre entre parenthèses = intensité de l'association avec la maladie (V de Cramér pour les catégories, |Pearson| pour les numériques).
+""")
 
     with st.expander("Voir la fonction simple predire_scenario (style demandé, adapté CardioRisk binaire)"):
         st.code("""ORDER = ["Sain (0)", "Malade (1)"]
@@ -1031,19 +1071,31 @@ for nom, vals in SCENARIOS.items():
             st.markdown("#### Mesures numériques")
             for col, s in num_items[:half]:
                 label, desc = FIELD_INFO.get(col, (col, ""))
-                patient[col] = st.number_input(label, min_value=float(s["min"]), max_value=float(s["max"]), value=float(s["median"]), key=f"n_{col}", help=desc)
+                kw = dict(min_value=float(s["min"]), max_value=float(s["max"]), key=f"n_{col}",
+                          help=f"{desc} Influence sur le risque : {INFLUENCE.get(col, '—')}.")
+                if f"n_{col}" not in st.session_state:
+                    kw["value"] = float(s["median"])
+                patient[col] = st.number_input(label, **kw)
         with colB:
             st.markdown("#### Mesures numériques (suite)")
             for col, s in num_items[half:]:
                 label, desc = FIELD_INFO.get(col, (col, ""))
-                patient[col] = st.number_input(label, min_value=float(s["min"]), max_value=float(s["max"]), value=float(s["median"]), key=f"n_{col}", help=desc)
+                kw = dict(min_value=float(s["min"]), max_value=float(s["max"]), key=f"n_{col}",
+                          help=f"{desc} Influence sur le risque : {INFLUENCE.get(col, '—')}.")
+                if f"n_{col}" not in st.session_state:
+                    kw["value"] = float(s["median"])
+                patient[col] = st.number_input(label, **kw)
         st.markdown("#### Variables catégorielles")
         cat_cols = st.columns(2)
         for i, (col, options) in enumerate(meta["cat"].items()):
             opts = [o for o in options if o is not None]
             label, desc = FIELD_INFO.get(col, (col, ""))
             with cat_cols[i % 2]:
-                patient[col] = st.selectbox(label, opts, index=0, key=f"c_{col}", help=desc)
+                kw = dict(options=opts, key=f"c_{col}",
+                          help=f"{desc} Influence sur le risque : {INFLUENCE.get(col, '—')}.")
+                if f"c_{col}" not in st.session_state:
+                    kw["index"] = 0
+                patient[col] = st.selectbox(label, **kw)
         envoyer = st.form_submit_button("Prédire / Comparer les 3 modèles", use_container_width=True)
 
     if envoyer:
@@ -1290,11 +1342,100 @@ for nom, vals in SCENARIOS.items():
         st.write("- " + "\n- ".join(reasons))
         st.warning("Verdict pédagogique issu d'un modèle statistique. Il ne remplace pas un diagnostic médical.")
 
+    # ----- Deux exemples prêts à l'emploi (démonstration) -----
+    st.markdown("---")
+    st.markdown("### Deux exemples prêts à l'emploi : un patient malade, un patient sain")
+    st.caption("Valeurs cliniques réelles rejouées en direct par le modèle exporté (`model.joblib`). Clique sur le bouton pour les injecter dans le formulaire ci-dessus.")
+    _cols_ex = list(meta["num"]) + list(meta["cat"])
+    for titre, vals in EXEMPLES.items():
+        row = pd.DataFrame([vals])[_cols_ex]
+        p = float(model.predict_proba(row)[0, 1])
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.markdown(f"**{titre}**")
+            st.dataframe(row.T.astype(str).rename(columns={0: "Valeur"}), use_container_width=True)
+        with c2:
+            st.metric("Probabilité de maladie", f"{p:.1%}")
+            if p >= float(meta["seuil"]):
+                st.error(f"Seuil {float(meta['seuil']):.0%} → **MALADE / risque élevé**")
+            else:
+                st.success(f"Seuil {float(meta['seuil']):.0%} → **SAIN / risque faible**")
+            if st.button("Charger ces valeurs dans le formulaire", key=f"load_{titre}"):
+                st.session_state["_pending_example"] = vals
+                st.rerun()
+    st.info("**Pour la démo** : charge l'exemple malade → probabilité haute ; puis change seulement `cp`, `exang` ou `thal` → le verdict bascule. C'est la démonstration directe des variables fortes de la Phase 7.")
+
 # -------------------- PAGE 4 --------------------
-else:
+elif page.startswith("4"):
     st.header("4) Notebook prioritaire")
     st.success("Le notebook CardioRisk contient le détail complet : code, sorties, graphiques, interprétations figure par figure.")
     render_notebook(NOTEBOOK_PRIORITY)
+
+else:
+    st.header("5) Soutenance VIC — la trame demandée par le prof")
+    st.markdown("""
+Cette page ne contient pas de nouveau calcul : elle **relie chaque point exigé** à ce qui existe déjà dans le projet, avec la phrase à dire et l'écran à montrer.
+""")
+
+    st.markdown("### La trame officielle, point par point")
+    show_table([
+        ("1. Contexte, objectifs, domaine", "Page 1 + notebook (A1)", "Pré-dépistage cardiaque : prioriser les patients à examiner ; pas un diagnostic.", "Le problème médical, le coût d'un malade manqué."),
+        ("2. Solutions et travaux existants", "Page 1 (veille) + notebooks Kaggle analysés", "Approches publiées sur le même jeu UCI (Cleveland, 4 centres).", "Le tableau comparatif des notebooks existants."),
+        ("3. Limites des solutions actuelles", "Page 1 + Phase 11bis", "LabelEncoder sur des nominales, suppression de lignes, pas de vrai test, aucune étude d'association.", "Les 3 corrections apportées (one-hot après split, test 184 patients, 3 blocs)."),
+        ("4. Formulation du problème", "Page 1 + Phase 4", "Classification binaire : `target = 1 si num > 0`, 13 variables explicatives.", "La cible et le split 734 / 184."),
+        ("5. Approche et valeur ajoutée", "Phases 7 à 13", "Trois blocs d'association + pipeline sans fuite + seuil piloté par le rappel.", "Le schéma des 18 phases (page 2)."),
+        ("6. Schéma global et flux", "Page 2 (phases 1→18)", "CSV → nettoyage → split → pipeline → modèle → seuil → app.", "La table des 18 phases, puis la page Prédiction."),
+        ("7. Données et prétraitement", "Phases 1 à 4, 8, 9", "920 lignes → 918 patients, 13 variables ; médiane/mode appris sur le train seulement.", "Le tableau « données » et le pipeline de la Phase 9."),
+        ("8. Justification du modèle", "Phase 11 + 11bis", "Régression logistique : meilleure AUC CV (0,883), explicable, 8 FN au seuil.", "Le tableau des 8 modèles comparés."),
+        ("9. Matrice de corrélation interprétée", "Phase 7 (3 blocs)", "Pearson (num×num), V de Cramér (cat×cat), eta (num×cat) puis classement vs cible.", "Voir la section ci-dessous : c'est LE point à préparer."),
+        ("10. Résultats et indicateurs", "Phase 12", "AUC 0,927 · accuracy 0,848 · rappel 0,902 (0,922 au seuil 0,41).", "La matrice de confusion chiffrée."),
+        ("11. R², MAE, MSE expliqués", "Phase 12 + conclusion finale", "R² 0,568 · MAE 0,2317 · MSE 0,1067 · RMSE 0,3267 (sur les probabilités).", "La table des métriques + le paragraphe « R² = 0,568 »."),
+        ("12. Tests sur nouvelles données, réel vs prédit, limites", "Phases 14 et 16", "Formulaire + graphique réel/prédit + calibration ; limites : 4 centres, `ca` 309 connus.", "Les deux graphiques réel vs prédit (page 14 du notebook) et la démo du formulaire."),
+    ], ["Point exigé", "Où c'est", "Ce que je dis", "Ce que je montre"])
+
+    st.markdown("### Le point délicat : Pearson, V de Cramér, eta — quoi montrer, quoi dire")
+    st.markdown("""
+**Idée à retenir** : il n'y a pas UNE corrélation. Il y a **trois mesures** parce qu'il y a **trois types de paires**. Ce n'est pas un choix esthétique, c'est une contrainte mathématique.
+
+| Ce que je montre | Ce que je dis (une phrase) | Pourquoi c'est vrai |
+|---|---|---|
+| **Heatmap 7.1** (6 numériques) | « Entre deux mesures, Pearson : la plus forte paire est `age`–`ca` = 0,37, donc pas de redondance. » | Pearson exige deux quantités, avec une distance qui a un sens (5 ans = 5 ans). |
+| **Heatmap 7.2** (7 catégories) | « Entre deux catégories, Pearson est interdit : `cp` codée 0-1-2-3 n'a ni ordre ni distance ; j'utilise le V de Cramér : `cp`–`exang` = 0,45. » | Le V de Cramér se calcule sur le **tableau de comptage**, sans aucun codage. |
+| **Heatmap 7.3** (num × cat) | « Entre une catégorie et une mesure, je compare les moyennes de groupes avec eta : `oldpeak`–`slope` = 0,42. » | eta = racine de la part de variance expliquée ; aucune catégorie n'est transformée en nombre. |
+| **Tableau 7.4** | « Avec la cible, j'utilise la mesure du type : `cp` 0,54, `thal` 0,50, `exang` 0,46 → **le signal le plus fort est catégoriel**. » | On ne mélange jamais deux mesures de nature différente. |
+
+**Si le prof demande « pourquoi pas juste Pearson ? »** : montrer la cellule de démonstration du notebook — la même variable `cp` donne **−0,39, +0,47 ou −0,54** selon l'ordre de numérotation. Un coefficient qui change de signe quand on renumérote ne mesure pas la maladie : il mesure le codage.
+
+**Si le prof demande « pourquoi pas de One-Hot avant ? »** : l'encodeur apprendrait des modalités du test (fuite), il écraserait les coefficients et créerait de fausses corrélations négatives entre modalités d'une même variable. Le One-Hot est fait **après le split, dans le pipeline**.
+""")
+
+    st.markdown("### AUC, R², MAE, MSE, rappel : les mots simples")
+    show_table([
+        ("AUC", "Sur 100 couples (un malade + un sain) tirés au hasard, dans combien de cas le modèle donne la proba la plus haute au malade ?", "0,5 = hasard · 1 = parfait", "0,927 → 93 fois sur 100"),
+        ("Rappel", "Sur les malades, combien le modèle en détecte ?", "1 = aucun malade manqué", "0,902 → 92/102 (94/102 au seuil 0,41)"),
+        ("Précision", "Quand il dit « malade », combien le sont vraiment ?", "1 = aucune fausse alerte", "0,836"),
+        ("R²", "Part de la variation des étiquettes (0/1) expliquée par le modèle", "1 = parfait · 0 = pronostic constant", "0,568 (élevé pour du binaire)"),
+        ("MAE", "Écart moyen entre la probabilité prédite et la réalité (0 ou 1)", "plus bas = mieux", "0,2317"),
+        ("MSE / RMSE", "Erreur quadratique (pénalise les erreurs confiantes) et sa racine", "plus bas = mieux", "0,1067 / 0,3267"),
+    ], ["Métrique", "En mots simples", "Comment lire", "Notre valeur"])
+    st.info("**À dire** : l'AUC dit si le modèle **classe** bien ; le rappel dit **combien de malades il rate** ; le R² dit **quelle part de l'information il capte**. En pré-dépistage, l'ordre de priorité est rappel → AUC → précision → R².")
+
+    st.markdown("### Les 6 questions que le jury va poser (et la réponse courte)")
+    st.markdown("""
+1. **« Pourquoi la régression logistique ? »** → meilleure AUC en validation croisée (0,883) et sur le test (0,927), 8 malades manqués au lieu de 13, et un coefficient par variable donc un discours clinique possible.
+2. **« Pourquoi le seuil 0,41 et pas 0,50 ? »** → 0,50 est une convention ; 0,41 est calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %. Effet mesuré : 2 malades détectés en plus, 5 fausses alertes en plus.
+3. **« Comment évitez-vous la fuite de données ? »** → tout ce qui apprend (médiane, mode, scaling, one-hot) est **dans le pipeline**, ajusté sur `X_train` uniquement, refait à chaque pli de la validation croisée.
+4. **« Médiane ou patient similaire (KNN) ? »** → les deux se valent (rappel identique 0,902 ; R² 0,568 vs 0,574 ; IC contenant 0). La médiane est livrée pour sa simplicité et la transparence de ses valeurs ; le KNN moyenne des codes sur `thal`, ce qui produit 51 % de `fixed defect` contre 11 % en réalité.
+5. **« R² ou rappel ? »** → le rappel pilote la décision (un malade manqué coûte plus qu'une fausse alerte) ; le R² documente la qualité des probabilités et répond à l'exigence du cours.
+6. **« Vos résultats sont-ils fiables ? »** → test de 184 patients **jamais utilisés** avant l'évaluation finale, IC bootstrap fournis, et limites explicites : 918 patients, 4 centres, `ca` connu pour 309 seulement, probabilités non calibrées.
+""")
+
+    st.markdown("### Trois erreurs à ne pas commettre en soutenance")
+    st.markdown("""
+- **Ne pas dire « j'ai fait une matrice de corrélation »** en montrant la heatmap des 13 variables : dire « trois mesures adaptées à trois types de paires », sinon la question « Pearson sur `cp`, vraiment ? » arrive immédiatement.
+- **Ne pas confondre accuracy et rappel** : 84,8 % d'accuracy peut cacher des malades manqués. Toujours montrer la matrice de confusion.
+- **Ne pas présenter le test comme un jeu d'entraînement** : le test est utilisé **une seule fois**, à la fin ; c'est écrit dans la Phase 12.
+""")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("CardioRisk Studio — ISCAE")
