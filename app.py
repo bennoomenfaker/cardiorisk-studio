@@ -660,6 +660,22 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
 | **7.3** | 6 numériques × 7 catégorielles | **eta η** (0 à 1) | non, comparaison de moyennes |
 | **7.4** | les 13 variables × `target` | mesure adaptée au type + taux de malades | non |
 """)
+    with st.expander("Ce que je fais, pourquoi, et pourquoi pas du One-Hot avant le split"):
+        st.markdown("""
+**Ce que je fais** : j'observe les variables **brutes**, sans les modifier, avec une mesure adaptée à chaque type de paire — Pearson (num × num), V de Cramér (cat × cat), eta (num × cat) — puis je classe les 13 variables par association avec `target` et je lis le sens dans les taux de malades par modalité.
+
+**Pourquoi ce découpage** : une seule mesure ne peut pas couvrir les trois situations. Pearson suppose deux quantités avec une distance qui a un sens ; `cp` codée 0-1-2-3 n'en a pas (la démonstration du notebook donne −0,39, +0,47 ou −0,54 pour la même variable selon la numérotation). Le V de Cramér et eta travaillent sur les modalités brutes, sans leur inventer un ordre.
+
+**Pourquoi pas de `OneHotEncoder` avant le split** :
+
+| Raison | Explication |
+|---|---|
+| **Fuite de données** | l'encodeur apprend la liste des modalités sur les données qu'on lui donne ; appliqué avant `train_test_split`, il apprend des modalités présentes seulement dans le test. Il doit rester dans le `Pipeline` (Phase 9). |
+| **Statistiques faussées** | Pearson sur des colonnes 0/1 écrase les coefficients (rarement > 0,40 même pour un lien fort) et fabrique de **fausses corrélations négatives** entre modalités d'une même variable (`cp_asymptomatic` est anti-corrélé à `cp_non-anginal`, leur somme vaut 1). |
+| **Matrice illisible** | 13 variables → ~26 colonnes 0/1 : une matrice 26 × 26 inexploitable en soutenance. |
+
+**La phrase à retenir** : *avant le split on observe les variables brutes avec l'outil adapté à chaque type ; après le split on transforme les catégorielles en One-Hot, appris sur `X_train` seulement.*
+""")
 
     st.markdown("#### 7.1 — Numérique × numérique : Pearson")
     fig_corr, corr = correlation_figure(d)
@@ -817,6 +833,15 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
         _fitted, cmp_metrics, _cms = train_compare_models()
     st.dataframe(cmp_metrics.round(3), use_container_width=True)
     st.caption("Recalculé en direct par l'application, avec le même split et la même graine que le notebook (80/20 stratifié, `random_state=42`, seuil par défaut 0,50).")
+
+    st.markdown("**Matrice de confusion des 3 modèles comparés (seuil 0,50)**")
+    cm_rows = []
+    for name, cm in _cms.items():
+        tn, fp, fn, tp = cm.ravel()
+        cm_rows.append({"Modèle": name, "TN (sain→sain)": int(tn), "FP (sain→malade)": int(fp),
+                        "FN (malade→sain)": int(fn), "TP (malade→malade)": int(tp)})
+    st.dataframe(pd.DataFrame(cm_rows), use_container_width=True, hide_index=True)
+    st.caption("**Interprétation** : sur 184 patients (82 sains, 102 malades), la régression logistique détecte 92 malades sur 102 (**rappel 0,902**) en alertant à tort 18 sains (**précision 0,836**) ; Random Forest et KNN en détectent 89 (0,873) avec respectivement 18 et 14 fausses alertes. Les **FN** sont l'erreur critique : ce sont eux que le seuil abaissé à 0,41 fait passer de 10 à 8. Le R² (0,568 sur la probabilité) résume la qualité d'ensemble mais ne dit pas combien de malades ont été manqués : c'est pourquoi la décision se lit avec la matrice + le rappel.")
 
     # --- Phase 13 ---
     st.subheader("Phase 13 — Choix du seuil de décision")
