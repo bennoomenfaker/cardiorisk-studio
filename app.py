@@ -216,6 +216,79 @@ def correlation_figure(df: pd.DataFrame):
     return fig, corr
 
 
+def _cramers_v(x, y):
+    """V de Cramér (0 à 1) calculé sur la table de contingence, sans coder les modalités en nombres."""
+    tab = pd.crosstab(x, y)
+    if tab.empty or min(tab.shape) < 2:
+        return np.nan
+    obs = tab.to_numpy(); n = obs.sum()
+    exp = np.outer(obs.sum(axis=1), obs.sum(axis=0)) / n
+    phi2 = ((obs - exp) ** 2 / exp).sum() / n
+    r, k = tab.shape
+    phi2_c = max(0.0, phi2 - ((k - 1) * (r - 1)) / (n - 1))
+    r_c = r - ((r - 1) ** 2) / (n - 1)
+    k_c = k - ((k - 1) ** 2) / (n - 1)
+    denom = min(k_c - 1, r_c - 1)
+    return float(np.sqrt(phi2_c / denom)) if denom > 0 else np.nan
+
+
+def _eta(cat, num):
+    """Rapport de corrélation eta (0 à 1) : part de variance du numérique portée par les groupes de la catégorie."""
+    d = pd.DataFrame({"groupe": cat, "valeur": num}).dropna()
+    if d["groupe"].nunique() < 2 or d["valeur"].nunique() < 2:
+        return np.nan
+    g = d.groupby("groupe")["valeur"]
+    ss_inter = (g.count() * (g.mean() - d["valeur"].mean()) ** 2).sum()
+    ss_total = ((d["valeur"] - d["valeur"].mean()) ** 2).sum()
+    return float(np.sqrt(ss_inter / ss_total)) if ss_total > 0 else np.nan
+
+
+@st.cache_data
+def corr_cat_figure(df: pd.DataFrame):
+    cat = [c for c in meta["cat"] if c in df.columns]
+    mat = pd.DataFrame([[1.0 if a == b else _cramers_v(df[a], df[b]) for b in cat] for a in cat], index=cat, columns=cat)
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+    sns.heatmap(mat, annot=True, fmt=".2f", cmap="Blues", vmin=0, vmax=1, ax=ax)
+    ax.set_title("V de Cramér — catégorielle × catégorielle")
+    fig.tight_layout()
+    return fig, mat
+
+
+@st.cache_data
+def assoc_mixte_figure(df: pd.DataFrame):
+    num = [c for c in meta["num"] if c in df.columns]
+    cat = [c for c in meta["cat"] if c in df.columns]
+    mat = pd.DataFrame([[_eta(df[c], df[n]) for c in cat] for n in num], index=num, columns=cat)
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    sns.heatmap(mat, annot=True, fmt=".2f", cmap="Blues", vmin=0, vmax=1, ax=ax)
+    ax.set_title("eta (η) — numérique × catégorielle")
+    fig.tight_layout()
+    return fig, mat
+
+
+@st.cache_data
+def lien_cible_table(df: pd.DataFrame):
+    num = [c for c in meta["num"] if c in df.columns]
+    cat = [c for c in meta["cat"] if c in df.columns]
+    rows = []
+    for c in num + cat:
+        a = abs(df[[c, "target"]].corr().iloc[0, 1]) if c in num else _cramers_v(df[c], df["target"])
+        rows.append({"Variable": c, "Mesure": "|Pearson|" if c in num else "V de Cramér",
+                     "Association": round(float(a), 3), "Patients utilisés": int(df[c].notna().sum())})
+    return pd.DataFrame(rows).sort_values("Association", ascending=False).reset_index(drop=True)
+
+
+@st.cache_data
+def taux_modalites_table(df: pd.DataFrame):
+    rows = []
+    for c in [c for c in meta["cat"] if c in df.columns]:
+        t = df.groupby(c)["target"].agg(["mean", "size"])
+        for m, l in t.iterrows():
+            rows.append({"Variable": c, "Modalité": str(m), "Patients": int(l["size"]),
+                         "Taux de malades %": round(100 * l["mean"], 1)})
+    return pd.DataFrame(rows).sort_values(["Variable", "Taux de malades %"], ascending=[True, False]).reset_index(drop=True)
+
+
 def show_fig(fig, caption: str | None = None):
     """Affiche une figure matplotlib puis la libère (évite `st.pyplot(fig); plt.close(fig)` partout)."""
     st.pyplot(fig)
@@ -407,12 +480,12 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
         ("4", "Cible et familles de variables", "`num` (0–4) → `target` binaire ; listes `NUM` / `CAT`", "target 0/1"),
         ("5", "Valeurs aberrantes (IQR)", "détecter, interpréter, décider — aucune suppression à l'aveugle (nettoyage)", "tableau de décision"),
         ("6", "Analyse visuelle", "distributions, boxplots par classe, taux de maladie par modalité", "figures + lectures"),
-        ("7", "Étude de corrélation", "les 13 variables : Pearson + V de Cramér + eta", "matrice + classement"),
+        ("7", "Associations en 3 blocs", "7.1 Pearson (num×num) · 7.2 V de Cramér (cat×cat) · 7.3 eta (num×cat) · 7.4 lien avec target", "3 matrices + taux"),
         ("8", "Séparation Train / Test", "80/20 stratifié, `random_state=42`", "734 / 184"),
         ("9", "Préparation (Pipeline)", "médiane, mode, `StandardScaler`, `OneHotEncoder` — `fit` sur le train", "30 colonnes"),
         ("10", "3 stratégies de valeurs manquantes", "suppression / médiane-mode / patient similaire (KNN) sur `ca` et `thal`", "comparatif CV"),
         ("11", "Comparaison des modèles", "baseline + 5 modèles, puis vérification sur 8 modèles", "AUC + rappel"),
-        ("12", "Évaluation sur le test", "matrice de confusion, ROC, R²/MAE/MSE", "scores test"),
+        ("12", "Évaluation sur le test", "matrice de confusion, ROC, R²/MAE/MSE/RMSE", "scores test"),
         ("13", "Seuil de décision", "seuil calculé pour un rappel ≥ 90 % (pas 0,50 arbitraire)", "≈ 0,41"),
         ("14", "Réel vs prédit", "contrôle visuel des probabilités autour du seuil", "figure test"),
         ("15", "Importance des variables", "permutation importance", "classement"),
@@ -576,17 +649,50 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
     show_fig(fig_c, "**Nom** : barplots du taux de maladie par catégorie. **Utilité** : identifier les modalités à risque. **Lecture** : hauteur = proportion de malades dans la modalité. **Interprétation** : `cp = asymptomatic`, `exang = True`, `thal` anormal, `slope` flat/downsloping sont associés à un taux de maladie plus élevé.")
 
     # --- Phase 7 ---
-    st.subheader("Phase 7 — Étude de corrélation (toutes les variables)")
+    st.subheader("Phase 7 — Associations en 3 blocs séparés (pas de Pearson sur des catégories)")
     st.markdown("""
-**Utilité** : mesurer le lien linéaire entre variables numériques et avec `target` ; détecter la redondance.
-**Comment lire** : valeur de -1 à +1 ; proche +1 même sens, -1 sens inverse, 0 pas de lien linéaire ; diagonale = 1.
-**Limite** : corrélation ≠ causalité, et Pearson mesure seulement une relation **linéaire**. Le notebook ne se limite pas aux numériques : il calcule une **matrice d'association sur les 13 variables** (Pearson · V de Cramér · eta). Classement avec la cible (`target` traitée comme catégorielle) : `cp` 0,538 · `thal` 0,497 · `exang` 0,461 · `ca` 0,456 · `thalch` 0,393 · `oldpeak` 0,386 · `slope` 0,377 · `sex` 0,304 · `age` 0,282 · `fbs` 0,139 · `chol` 0,119 · `trestbps` 0,115 · `restecg` 0,100. Attention : `ca` n'est calculé que sur **309 patients** (dont 299 de Cleveland) et `thal` sur 434 → associations fragiles.
+**Règle** : une seule mesure ne peut pas couvrir les trois situations. Un coefficient de Pearson sur `cp` codée 0-1-2-3 ne mesure que l'ordre de numérotation (démonstration faite dans le notebook). On sépare donc :
+
+| Bloc | Variables | Mesure | Encodage ? |
+|---|---|---|---|
+| **7.1** | 6 numériques × 6 numériques | **r de Pearson** (−1 à +1) | non, ce sont des quantités |
+| **7.2** | 7 catégorielles × 7 catégorielles | **V de Cramér** (0 à 1) | non, modalités brutes |
+| **7.3** | 6 numériques × 7 catégorielles | **eta η** (0 à 1) | non, comparaison de moyennes |
+| **7.4** | les 13 variables × `target` | mesure adaptée au type + taux de malades | non |
 """)
+
+    st.markdown("#### 7.1 — Numérique × numérique : Pearson")
     fig_corr, corr = correlation_figure(d)
     show_fig(fig_corr)
+    corr_num = corr.drop(index="target", errors="ignore").drop(columns="target", errors="ignore")
     tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
-    st.dataframe(tc.rename("corr_avec_target").to_frame(), use_container_width=True)
-    st.caption("**Interprétation** (13 variables, matrice complète du notebook) : `cp` (0,538, V de Cramér), `thal` (0,497) et `exang` (0,461) arrivent avant `ca` (0,456), `thalch` (0,393) et `oldpeak` (0,386) ; `chol` (0,119), `trestbps` (0,115) et `restecg` (0,100) sont faibles. Le lien le plus fort est donc **catégoriel**. Aucune paire explicative ne dépasse 0,45 : pas de multicolinéarité problématique. `ca` n'est connu que pour 309 patients et `thal` pour 434 : ces deux associations valent surtout pour Cleveland.")
+    c71, c72 = st.columns(2)
+    with c71:
+        st.dataframe(tc.rename("r avec target").to_frame(), use_container_width=True)
+    with c72:
+        pairs = corr_num.where(np.triu(np.ones(corr_num.shape, dtype=bool), k=1)).stack()
+        pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(6)
+        st.dataframe(pairs.rename("r (entre features)").to_frame(), use_container_width=True)
+    st.caption("**Interprétation 7.1** : paires les plus fortes `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282. **Aucune ne dépasse |r| = 0,40** : pas de redondance, on garde les 6 numériques. `age` est au centre de 4 paires : facteur de confusion classique. Pearson ne voit que le linéaire et ne doit jamais être calculé sur une catégorielle.")
+
+    st.markdown("#### 7.2 — Catégorielle × catégorielle : V de Cramér")
+    fig_cat, mat_cat = corr_cat_figure(d)
+    show_fig(fig_cat)
+    paires_cat = mat_cat.where(np.triu(np.ones(mat_cat.shape, dtype=bool), k=1)).stack().sort_values(ascending=False).head(6)
+    st.dataframe(paires_cat.rename("V de Cramér").to_frame(), use_container_width=True)
+    st.caption("**Interprétation 7.2** : `cp`–`exang` **0,447**, `sex`–`thal` 0,375, `exang`–`slope` 0,343, `exang`–`thal` 0,337. Toutes **sous 0,50** : associations modérées au plus, aucune redondance à supprimer. Ces quatre variables décrivent l'ischémie d'effort. Le V de Cramér dit « lié », pas « dans quel sens » : le sens se lit dans les taux par modalité (7.4).")
+
+    st.markdown("#### 7.3 — Numérique × catégorielle : eta (η)")
+    fig_eta, mat_eta = assoc_mixte_figure(d)
+    show_fig(fig_eta)
+    paires_eta = mat_eta.stack().sort_values(ascending=False).head(8)
+    st.dataframe(paires_eta.rename("eta").to_frame(), use_container_width=True)
+    st.caption("**Interprétation 7.3** : `oldpeak`–`slope` **0,421**, `thalch`–`slope` 0,410, `oldpeak`–`exang` 0,394, `thalch`–`cp` 0,372. η² ≤ 0,18 : les groupes expliquent au plus 18 % de la variance du numérique, donc signaux **modérés** et partiellement redondants (mesures de l'effort). Avec `chol` et `trestbps`, η ≤ 0,15.")
+
+    st.markdown("#### 7.4 — Lien de chaque variable avec `target`")
+    st.dataframe(lien_cible_table(d), use_container_width=True, hide_index=True)
+    st.dataframe(taux_modalites_table(d), use_container_width=True, hide_index=True)
+    st.caption("**Interprétation 7.4** : le podium est **catégoriel** — `cp` 0,538, `thal` 0,497, `exang` 0,461 — avant `ca` 0,456, `thalch` 0,393, `oldpeak` 0,386. Sens médical : `cp = asymptomatic` **79 %** de malades (contre 13,9 % en atypical angina), `exang = True` 83,6 %, `thal` anormal ~76–80 % (contre 29,6 % si normal), `slope` flat/downsloping ~77 % (contre 38,4 % upsloping), homme 63,2 % contre 25,9 %. ⚠️ `ca` n'est calculé que sur **309 patients** et `thal` sur 434 : associations fragiles. `chol` (0,119) reste 2ᵉ en importance dans le modèle (Phase 15) : association faible ≠ variable inutile.")
 
     # --- Phase 8 ---
     st.subheader("Phase 8 — Séparation Train / Test (avant tout apprentissage)")
@@ -798,7 +904,7 @@ proba = model.predict_proba(X_new)[:, 1]""", language="python")
 Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discrimination, et `ca` manquant à 66 % rend ses voisins peu informatifs. Les IC bootstrap se recoupent : on retient donc la médiane/mode pour sa **simplicité** et parce que c'est **elle qui est exportée** ici.
 """)
     st.markdown("""
-- **Q1 — Facteurs associés** : `ca`, `oldpeak`, `age` (positifs), `thalch` (négatif) ; côté catégories `cp = asymptomatic`, `exang`, `thal` anormal, `slope` flat/downsloping.
+- **Q1 — Facteurs associés** (Phase 7, mesure adaptée au type) : côté **catégories** `cp` 0,538 · `thal` 0,497 · `exang` 0,461 · `slope` 0,377 · `sex` 0,304 ; côté **numériques** `ca` 0,456 · `thalch` 0,393 · `oldpeak` 0,386 · `age` 0,282. Sens : `cp = asymptomatic` 79 % de malades, `exang = True` 83,6 %, `thal` anormal ~76–80 %, `slope` flat/downsloping ~77 %.
 - **Q2 — Variables les plus contributives** (permutation) : `cp` très loin devant, puis `chol`, `oldpeak`, `ca`, `exang`. `age` et `thalch` ressortent à ≈ 0 (information déjà portée par les autres variables).
 - **Q3 — Capacité prédictive** : AUC test **0,927** (CV 0,883), accuracy **0,848**, rappel 0,902 (baseline 0,55).
 - **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864) et arbre seul (0,804) ; aucune des 8 familles testées ne fait mieux.
