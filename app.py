@@ -784,12 +784,24 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 | **2. Médiane / mode** (retenue) | remplacer par une valeur typique | `ca` = médiane, `thal` = mode |
 | **3. Patient similaire (KNN)** | copier la valeur des patients les plus proches | `KNNImputer` sur les autres variables |
 """)
+    st.markdown("**Comparaison avec le modèle livré (régression logistique, seuil 0,50) — critères du projet : rappel, puis R²**")
     show_table([
-        ("Exp 1 — Supprimer ca/thal", 0.8043, 0.8302, 0.8987, 0.8626),
-        ("Exp 2 — Médiane / mode (retenue)", 0.8207, 0.8421, 0.9133, 0.8756),
-        ("Exp 3 — Patient similaire (KNN)", 0.8478, 0.8667, 0.9116, 0.8747),
-    ], ["Stratégie", "Accuracy test", "F1 test", "ROC-AUC test", "CV ROC-AUC"])
-    st.caption("**Interprétation** : la **médiane/mode** a le meilleur ROC-AUC test (0,913) **et** le meilleur CV ROC-AUC (0,876). Le KNN garde le meilleur rappel au seuil 0,5 mais passe derrière sur la discrimination une fois les distances standardisées. Les IC se recoupent : classement indicatif. On garde **médiane/mode** — meilleure, plus simple à expliquer et c'est elle qui est **exportée** dans l'app.")
+        ("1. Suppression ca/thal", "91 / 63 / 19 / 11", 0.8922, 0.5409, 0.4334, 0.9200),
+        ("2. Médiane / mode (livrée)", "92 / 64 / 18 / 10", 0.9020, 0.5680, 0.4554, 0.9267),
+        ("3. Patient similaire (KNN)", "92 / 65 / 17 / 10", 0.9020, 0.5743, 0.4696, 0.9249),
+    ], ["Stratégie", "TP/TN/FP/FN", "Rappel", "R² (proba)", "CV R²", "ROC-AUC"])
+    st.caption("**Interprétation corrigée** : sur les critères du projet, **KNN et médiane/mode se valent** — rappel identique (0,902 → 10 malades manqués), R² légèrement meilleur pour le **KNN** (0,5743 contre 0,5680 ; 0,4696 contre 0,4554 en CV), AUC et CV-rappel très légèrement meilleurs pour la médiane (0,9267 vs 0,9249). Les IC bootstrap appariés contiennent 0 : **aucune supériorité démontrée**. La médiane/mode reste la stratégie **livrée** pour sa simplicité et la transparence de ses valeurs (`ca = 0` est explicite), pas parce qu'elle serait meilleure.")
+    st.info("**C'est quoi le ROC-AUC ?** La probabilité qu'un malade tiré au hasard reçoive une probabilité plus haute qu'un sain tiré au hasard (0,5 = hasard). Ça mesure le classement **tous seuils confondus**, donc pas le nombre de malades manqués à notre seuil : c'est un garde-fou, pas l'arbitre. Le **CV ROC-AUC** est la même mesure sur 5 découpages du train (stabilité).")
+    st.markdown("**Contrôle des valeurs réellement imputées (test)**")
+    show_table([
+        ("`ca` = 0 vaisseau", "59,8 %", "100 %", "48,4 %"),
+        ("`ca` = 1 vaisseau", "20,7 %", "0 %", "44,4 %"),
+        ("`ca` = 2 vaisseaux", "13,9 %", "0 %", "7,1 %"),
+        ("`thal` = normal", "44,7 %", "100 %", "19,4 %"),
+        ("`thal` = reversable defect", "44,4 %", "0 %", "29,6 %"),
+        ("`thal` = fixed defect", "10,9 %", "0 %", "50,9 %"),
+    ], ["Valeur", "Observé (train)", "Médiane / mode", "KNN"])
+    st.caption("**Lecture** : la médiane écrit « 0 vaisseau » pour 126 patients et « thal normal » pour 108 — optimiste mais **transparent**, et le pipeline ajoute un indicateur de manquant. Le KNN respecte mieux le patient pour `ca` (48 % de 0, 44 % de 1), mais il **moyenne des codes** pour `thal` (nominal) : 50,9 % de `fixed defect` contre 10,9 % en réalité. C'est son vrai défaut ici — la piste d'amélioration serait d'imputer `thal` par un classifieur.")
     st.info("Résultats mesurés dans le notebook, **Phase 10** (même split, `random_state=42`).")
 
     # --- Phase 11 ---
@@ -933,7 +945,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
 - **Q2 — Variables les plus contributives** (permutation) : `cp` très loin devant, puis `chol`, `oldpeak`, `ca`, `exang`. `age` et `thalch` ressortent à ≈ 0 (information déjà portée par les autres variables).
 - **Q3 — Capacité prédictive** : AUC test **0,927** (CV 0,883), accuracy **0,848**, rappel 0,902 (baseline 0,55).
 - **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864) et arbre seul (0,804) ; aucune des 8 familles testées ne fait mieux.
-- **Q4bis — Valeurs manquantes** : médiane/mode en tête (ROC-AUC test 0,913 / CV 0,876), devant KNN (0,912 / 0,875) et suppression (0,899 / 0,863), avec des IC qui se recoupent : c'est aussi la stratégie exportée dans l'app.
+- **Q4bis — Valeurs manquantes** : **KNN et médiane/mode se valent** sur les critères du projet (rappel identique 0,902 → 10 FN ; R² **0,5743 KNN** contre 0,5680 ; CV R² 0,4696 contre 0,4554 ; AUC 0,9249 contre 0,9267). IC bootstrap contenant 0 → pas de gagnant démontré. La médiane/mode reste **livrée** pour sa simplicité et la transparence de ses valeurs ; le KNN est pénalisé par sa moyenne de codes sur `thal` (50,9 % de `fixed defect` contre 10,9 % en réel). Suppression derrière (rappel 0,8922, 11 FN).
 - **Q5 — Fiabilité** : rappel 0,90 au seuil 0,50 (10 faux négatifs / 102 malades, 18 faux positifs / 82 sains) et **0,92 au seuil 0,41** (8 faux négatifs, 23 faux positifs) ; **aide à la décision, jamais un diagnostic**.
 - **Limites** : 918 patients (920 lignes brutes − 2 doublons exacts), 4 centres, `ca`/`thal` très incomplètes, données rétrospectives. **Perspectives** : validation externe, calibration des probabilités, suivi de dérive du modèle.
 """)
@@ -942,7 +954,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
     st.markdown("### Conclusion finale — le verdict")
     v1, v2, v3 = st.columns(3)
     v1.metric("Modèle retenu", "Rég. logistique", "AUC test 0,927")
-    v2.metric("Valeurs manquantes", "Médiane / mode", "ROC-AUC 0,9133")
+    v2.metric("Valeurs manquantes", "Médiane / mode", "équivalent KNN (R² 0,568 vs 0,574)")
     v3.metric("Seuil de dépistage", f"{float(meta['seuil']):.2f}".replace(".", ","), "rappel 0,92 — 8 FN / 102")
     st.success("**Verdict** : régression logistique + imputation médiane/mode + seuil abaissé à 0,41. Sur 102 malades du test, **94 sont détectés et 8 manqués** ; sur 82 sains, 59 sont rassurés à juste titre et 23 reçoivent une fausse alerte. C'est le meilleur compromis de pré-dépistage, et le plus explicable cliniquement.")
 
@@ -963,7 +975,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
         {"Métrique": "R²", "Probabilité": 0.5680, "Classe 0/1": 0.3840, "Lecture": "57 % de la variance des étiquettes expliquée"},
     ]), use_container_width=True, hide_index=True)
     st.info("**R² = 0,568** : la cible est binaire, donc un R² ne peut pas approcher 1 ; 0,568 est **élevé** pour une classification (plafond pratique ≈ 0,6), et il prouve que le modèle fait bien mieux qu'un pronostic constant (R² = 0). Sur la classe prédite, MAE = MSE = 0,1522 = le taux d'erreur. Mais le R² **ne dit pas combien de malades ont été manqués** : il pèse un FN et un FP à égalité. D'où l'ordre de lecture retenu : **rappel → AUC → précision/F1 → R²/MAE/MSE/RMSE**.")
-    st.markdown("**Pourquoi ces choix** : régression logistique = meilleure AUC CV (0,883) et test (0,927), 8 FN au lieu de 13 ; médiane/mode = meilleur ROC-AUC test (0,9133 > KNN 0,9116 > suppression 0,8987) et stratégie réellement exportée ; KNN écarté parce que `ca` manque à 66 % (voisins calculés sur des valeurs déjà inventées) et que son avantage disparaît après standardisation ; suppression écartée car elle jette deux examens (−0,015 d'AUC).")
+    st.markdown("**Pourquoi ces choix** : régression logistique = meilleure AUC CV (0,883) et test (0,927), 8 FN au lieu de 13 au seuil retenu. Pour les manquants, **KNN et médiane/mode sont équivalents** (rappel identique, R² 0,5743 vs 0,5680, IC contenant 0) : la médiane est livrée pour sa **simplicité et la transparence de ses valeurs** (`ca = 0` explicite, indicateur de manquant), et parce que le KNN **moyenne des codes** sur `thal` (50,9 % de `fixed defect` contre 10,9 % en réel). La suppression est écartée : rappel 0,8922 (11 FN) et deux examens jetés.")
 
     with st.expander("Rappel — les 8 étapes génériques de tout projet ML"):
         ml_steps = [
