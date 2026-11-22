@@ -580,13 +580,13 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
     st.markdown("""
 **Utilité** : mesurer le lien linéaire entre variables numériques et avec `target` ; détecter la redondance.
 **Comment lire** : valeur de -1 à +1 ; proche +1 même sens, -1 sens inverse, 0 pas de lien linéaire ; diagonale = 1.
-**Limite** : corrélation ≠ causalité, et Pearson mesure seulement une relation **linéaire**. Le notebook ne se limite pas aux numériques : il calcule une **matrice d'association sur les 13 variables** (Pearson · V de Cramér · eta). Classement avec la cible : `cp` 0,540 · `thal` 0,501 · `exang` 0,462 · `ca` +0,456 · `thalch` −0,393 · `oldpeak` +0,386 · `slope` 0,381 · `sex` 0,305 · `age` +0,282 · `fbs` 0,143 · `chol` +0,119 · `trestbps` +0,115 · `restecg` 0,111.
+**Limite** : corrélation ≠ causalité, et Pearson mesure seulement une relation **linéaire**. Le notebook ne se limite pas aux numériques : il calcule une **matrice d'association sur les 13 variables** (Pearson · V de Cramér · eta). Classement avec la cible (`target` traitée comme catégorielle) : `cp` 0,538 · `thal` 0,497 · `exang` 0,461 · `ca` 0,456 · `thalch` 0,393 · `oldpeak` 0,386 · `slope` 0,377 · `sex` 0,304 · `age` 0,282 · `fbs` 0,139 · `chol` 0,119 · `trestbps` 0,115 · `restecg` 0,100. Attention : `ca` n'est calculé que sur **309 patients** (dont 299 de Cleveland) et `thal` sur 434 → associations fragiles.
 """)
     fig_corr, corr = correlation_figure(d)
     show_fig(fig_corr)
     tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
     st.dataframe(tc.rename("corr_avec_target").to_frame(), use_container_width=True)
-    st.caption("**Interprétation** (13 variables, matrice complète du notebook) : `cp` (0,540), `thal` (0,501), `exang` (0,462) arrivent avant `ca` (+0,456), `thalch` (−0,393) et `oldpeak` (+0,386) ; `chol` (+0,119) et `trestbps` (+0,115) sont faibles. Le lien le plus fort est donc **catégoriel**. Aucune paire explicative ne dépasse 0,45 : pas de multicolinéarité problématique. `ca` a beaucoup de NaN : à interpréter avec prudence.")
+    st.caption("**Interprétation** (13 variables, matrice complète du notebook) : `cp` (0,538, V de Cramér), `thal` (0,497) et `exang` (0,461) arrivent avant `ca` (0,456), `thalch` (0,393) et `oldpeak` (0,386) ; `chol` (0,119), `trestbps` (0,115) et `restecg` (0,100) sont faibles. Le lien le plus fort est donc **catégoriel**. Aucune paire explicative ne dépasse 0,45 : pas de multicolinéarité problématique. `ca` n'est connu que pour 309 patients et `thal` pour 434 : ces deux associations valent surtout pour Cleveland.")
 
     # --- Phase 8 ---
     st.subheader("Phase 8 — Séparation Train / Test (avant tout apprentissage)")
@@ -695,14 +695,17 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.markdown("""
 | Métrique | Définition simple | Comment lire | Dans notre cas |
 |---|---|---|---|
-| **MAE** | Erreur absolue moyenne | plus bas = mieux | exigence VIC, rapportée sur probabilité/classe |
-| **MSE** | Erreur quadratique moyenne | pénalise les grosses erreurs | exigence VIC |
-| **R²** | Part de variance expliquée | 1 bon, 0 naïf, <0 mauvais | exigence VIC ; prudence en classification |
+| **MAE** | Erreur absolue moyenne | plus bas = mieux | **0,2317** sur la probabilité (0,1522 sur la classe) |
+| **MSE** | Erreur quadratique moyenne | pénalise les grosses erreurs | **0,1067** (0,1522 sur la classe) |
+| **RMSE** | Racine du MSE, même unité que la cible | plus bas = mieux | **0,3267** (0,3901 sur la classe) |
+| **R²** | Part de variance expliquée | 1 bon, 0 naïf, <0 mauvais | **0,5680** sur la probabilité (0,3840 sur la classe) |
 | **Recall** | Vrais malades détectés / vrais malades | proche 1 = peu de malades manqués | **prioritaire en pré-dépistage** |
 | **Precision** | Vrais malades parmi les prédits malades | proche 1 = peu de fausses alertes | compromis avec le rappel |
 | **AUC** | Séparation sain/malade tous seuils | 0.5 hasard, 1 parfait | mesure globale |
 
 **Pourquoi le rappel est prioritaire ?** Un faux négatif = malade non détecté, risque grave. On accepte plus de fausses alertes en pré-dépistage.
+
+**Rappel ou R² ?** C'est le **rappel** qui pilote la décision : un faux négatif coûte un malade non dépisté, alors que le R² traite symétriquement un malade manqué et une fausse alerte, et reste borné en classification binaire (0,568 ici). Le R², le MAE, le MSE et le RMSE servent de **contrôle méthodologique** (exigence VIC, comparaison des modèles, lecture de l'erreur), pas de critère de choix du seuil. Ordre retenu : **rappel → AUC → précision/F1 → R²/MAE/MSE/RMSE**.
 """)
     with st.spinner("Recalcul des métriques sur le jeu test…"):
         _fitted, cmp_metrics, _cms = train_compare_models()
@@ -772,6 +775,28 @@ proba = model.predict_proba(X_new)[:, 1]""", language="python")
 
     # --- Phase 18 ---
     st.subheader("Phase 18 — Conclusion")
+    st.markdown("""
+### Les deux réponses clés
+
+**1) Meilleur modèle : la régression logistique.**
+
+| Modèle | AUC CV | AUC test | Rappel (0,50) | FN |
+|---|---:|---:|---:|---:|
+| **Régression logistique (retenue)** | **0,883** | **0,927** | **0,90** | **10 (8 au seuil 0,41)** |
+| Random Forest | 0,876 | 0,917 | 0,87 | 13 |
+| KNN | 0,864 | 0,898 | 0,87 | 13 |
+| Arbre de décision | 0,804 | — | — | — |
+
+**2) Meilleure stratégie de valeurs manquantes : médiane / mode** (à égalité de modèle).
+
+| Stratégie | ROC-AUC test | CV ROC-AUC | Complexité |
+|---|---:|---:|---|
+| **Médiane / mode (retenue)** | **0,9133** | **0,8756** | une valeur apprise par variable |
+| Patient similaire (KNN) | 0,9116 | 0,8747 | stocke tous les patients, distances à calculer |
+| Suppression `ca` / `thal` | 0,8987 | 0,8626 | jette deux examens |
+
+Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discrimination, et `ca` manquant à 66 % rend ses voisins peu informatifs. Les IC bootstrap se recoupent : on retient donc la médiane/mode pour sa **simplicité** et parce que c'est **elle qui est exportée** ici.
+""")
     st.markdown("""
 - **Q1 — Facteurs associés** : `ca`, `oldpeak`, `age` (positifs), `thalch` (négatif) ; côté catégories `cp = asymptomatic`, `exang`, `thal` anormal, `slope` flat/downsloping.
 - **Q2 — Variables les plus contributives** (permutation) : `cp` très loin devant, puis `chol`, `oldpeak`, `ca`, `exang`. `age` et `thalch` ressortent à ≈ 0 (information déjà portée par les autres variables).
@@ -880,34 +905,23 @@ for nom, vals in SCENARIOS.items():
         st.info(f"**Meilleur en pré-dépistage (priorité Rappel/FN)** : **{best_recall}** — Rappel={cmp_metrics.loc[best_recall,'Rappel']:.2%}, FN={int(cmp_metrics.loc[best_recall,'FN'])}, FP={int(cmp_metrics.loc[best_recall,'FP'])}. Manquer un malade (FN) est critique.")
         with st.expander("Quel est le meilleur modèle ? (interprétation vérifiée)"):
             st.markdown("""
-**KNN est le meilleur modèle en termes de performance globale** sur Accuracy, Précision et F1 (résultats vérifiés sur le même jeu de test).
+**La régression logistique est le meilleur modèle du projet** : meilleure AUC en validation croisée (0,883) **et** sur le test (0,927), et elle est la plus explicable (un coefficient par variable).
 
-**Pourquoi ?**
-- **Accuracy = 84,78 %** → il réalise le plus grand nombre de prédictions correctes.
-- **Précision = 84,91 %** → parmi les personnes prédites malades, environ 85 % sont réellement malades.
-- **F1 = 0,8654** → il offre un bon équilibre entre précision et rappel.
-- **16 FP** → il génère moins de fausses alertes que la régression logistique et Random Forest.
+### Ce que dit le test (184 patients jamais vus)
+| Modèle | AUC | Rappel (0,50) | FN | FP |
+|---|---:|---:|---:|---:|
+| **Régression logistique** | **0,927** | **0,902** | **10** | 18 |
+| Random Forest | 0,917 | 0,873 | 13 | 18 |
+| KNN | 0,898 | 0,873 | 13 | 14 |
 
-**Cependant, KNN n'est pas celui qui détecte le plus de malades.**
+- **Rappel** = TP/(TP+FN) : part des malades réellement détectés.
+- **FN (faux négatif)** : malade prédit sain → risque critique, c'est ce qu'on minimise.
+- **FP (faux positif)** : sain prédit malade → fausse alerte, coût de temps seulement.
+- Au **seuil retenu (0,41)**, la régression logistique ne manque que **8 malades sur 102** (contre 10 au seuil 0,50).
 
-### Interprétation des métriques
-- **Accuracy** = (TP+TN)/(TP+TN+FP+FN)
-- **Précision** = TP/(TP+FP)
-- **Rappel** = TP/(TP+FN)
-- **F1** = 2*(Précision*Rappel)/(Précision+Rappel)
-- **AUC** : capacité à distinguer malades/non-malades, indépendamment d'un seuil fixé.
+**KNN gagne sur l'accuracy et la précision** (0,853 / 0,864 contre 0,848 / 0,836) avec moins de fausses alertes, **mais il détecte moins de malades et classe moins bien les probabilités (AUC 0,898)**. En pré-dépistage, ce compromis n'est pas acceptable.
 
-### Contexte médical (pré-dépistage)
-| Modèle | FN (malades manqués) | Lecture |
-|---|---:|---|
-| Régression logistique | 11 | Détecte le plus de malades parmi les modèles comparés. |
-| KNN | 12 | Un malade manqué de plus que la régression logistique. |
-| Random Forest | 12 | Un malade manqué de plus que la régression logistique. |
-
-- **FN (False Negative)** : malade prédit non malade → risque critique.
-- **FP (False Positive)** : non malade prédit malade → fausse alerte.
-
-> **Conclusion** : KNN = meilleur équilibre global. Régression logistique = meilleur pour limiter les FN en pré-dépistage. Le choix final dépend du compromis métier validé par un humain.
+> **Conclusion** : régression logistique = **le meilleur modèle** (AUC test, rappel, explicabilité). Un modèle qui rate moins de malades et se laisse auditer cliniquement prime sur quelques points d'accuracy.
 """)
         cm_cols = st.columns(3)
         for i,(name,cm) in enumerate(cms.items()):
