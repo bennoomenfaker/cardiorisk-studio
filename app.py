@@ -700,6 +700,46 @@ for nom, vals in SCENARIOS.items():
                 st.pyplot(fig_cm); plt.close(fig_cm)
                 st.caption(f"TN={tn} FP={fp} FN={fn} TP={tp}")
 
+        with st.expander("Interprétation : réel vs prédit (4 zones)"):
+            st.markdown("""
+**Ligne rouge (seuil)** : au-dessus du seuil → prédit *Malade (1)* ; en dessous → prédit *Sain (0)*.
+
+| Zone | Position | Signification | Lecture |
+|---|---|---|---|
+| **Haut gauche** | Réel Sain (0), au-dessus ligne rouge | **Faux positif (FP)**, orange | Sain prédit malade = fausse alerte. |
+| **Bas gauche** | Réel Sain (0), sous ligne rouge | **Vrai négatif (TN)**, vert | Sain bien prédit sain. |
+| **Haut droite** | Réel Malade (1), au-dessus ligne rouge | **Vrai positif (TP)**, vert | Malade bien détecté. |
+| **Bas droite** | Réel Malade (1), sous ligne rouge | **Faux négatif (FN)**, rouge | Malade prédit sain = malade manqué (critique). |
+
+**Couleurs** : vert = correct, orange = FP, rouge = FN. Les points rouges en bas à droite sont les plus critiques en pré-dépistage.
+""")
+            # scatter réel vs prédit for best_recall model
+            try:
+                from sklearn.model_selection import train_test_split
+                df_all = pd.read_csv(DATA_PATH)
+                df_all.loc[df_all["chol"]==0,"chol"]=np.nan
+                df_all.loc[df_all["trestbps"]==0,"trestbps"]=np.nan
+                df_all["target"]=(df_all["num"]>0).astype(int)
+                NUM=["age","trestbps","chol","thalch","oldpeak","ca"]; CAT=["sex","cp","fbs","restecg","exang","slope","thal"]
+                for c in CAT: df_all[c]=df_all[c].astype(str).where(df_all[c].notna(), np.nan)
+                Xall=df_all[NUM+CAT]; yall=df_all["target"]
+                Xtr,Xte,ytr,yte= train_test_split(Xall,yall,test_size=0.2,stratify=yall,random_state=42)
+                m=models3[best_recall]
+                proba_test=m.predict_proba(Xte)[:,1]
+                pred_test=(proba_test>=seuil).astype(int)
+                yte=yte.reset_index(drop=True)
+                jitter=np.random.normal(0,0.04,len(yte))
+                colors=np.where((yte.values==1)&(pred_test==0),'#d62728',np.where((yte.values==0)&(pred_test==1),'#ff7f0e','#2ca02c'))
+                fig_s,ax_s=plt.subplots(figsize=(7,4.5))
+                ax_s.scatter(yte.values+jitter, proba_test, c=colors, alpha=0.65, edgecolor='white', linewidth=0.3)
+                ax_s.axhline(seuil, color='red', linestyle='--', label=f'Seuil = {seuil:.2%}')
+                ax_s.set_xticks([0,1]); ax_s.set_xticklabels(['Réel: Sain (0)','Réel: Malade (1)'])
+                ax_s.set_ylabel('Probabilité prédite de maladie'); ax_s.set_ylim(-0.02,1.02)
+                ax_s.set_title(f'Réel vs prédit (test) — {best_recall}')
+                ax_s.legend(); st.pyplot(fig_s); plt.close(fig_s)
+            except Exception as e:
+                st.caption(f"Graphique réel vs prédit indisponible: {e}")
+
         main_p = float(models3[best_recall].predict_proba(X)[0,1])
         verdict = "MALADE / RISQUE ÉLEVÉ" if main_p >= seuil else "SAIN / RISQUE FAIBLE"
         st.markdown("### Verdict final")
