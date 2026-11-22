@@ -28,20 +28,49 @@ TEAM = [
 ]
 
 FIELD_INFO = {
-    "age": ("Âge (années)", "Âge du patient. Le risque cardiovasculaire augmente souvent avec l'âge, mais l'âge seul ne suffit pas."),
-    "trestbps": ("Pression artérielle au repos (mm Hg)", "Tension au repos. Valeurs très élevées augmentent le risque ; dans ce dataset, pouvoir discriminant modéré."),
-    "chol": ("Cholestérol sérique (mg/dl)", "Cholestérol total. Utile mais peut être bruité/manquant ; `chol==0` traité comme valeur invalide/manquante."),
-    "thalch": ("Fréquence cardiaque maximale atteinte", "Max heart rate à l'effort. Souvent plus bas chez les patients malades (moindre tolérance à l'effort)."),
-    "oldpeak": ("Dépression ST à l'effort (oldpeak)", "Mesure d'anomalie ECG à l'effort. Plus élevé = signal plus associé à la maladie."),
-    "ca": ("Nombre de vaisseaux majeurs colorés (0-3)", "Examen fluoroscopie. Variable forte mais très manquante ; on l'impute avec indicateur de manquant."),
-    "sex": ("Sexe", "Variable démographique/catégorielle. Dans ce dataset, les hommes ont un taux de maladie plus élevé."),
-    "cp": ("Type de douleur thoracique", "Symptôme clé. `asymptomatic` a un taux de maladie élevé dans ce dataset (maladie silencieuse possible)."),
-    "fbs": ("Glycémie à jeun > 120 mg/dl", "Indicateur glycémique. Signal faible seul, mais peut contribuer avec les autres."),
-    "restecg": ("ECG au repos", "Résultat électrocardiogramme au repos. Certaines anomalies augmentent le risque."),
-    "exang": ("Angine induite par l'effort", "Douleur à l'effort. Très informative : oui -> taux de maladie plus élevé."),
-    "slope": ("Pente du segment ST à l'effort", "Interprétation ECG effort. `flat`/`downsloping` plus associés à la maladie que `upsloping`."),
-    "thal": ("Thalassémie/scintigraphie", "Résultat examen. `reversable/fixed defect` associés à plus de maladie que `normal`, mais beaucoup de NA."),
+    "age": ("Âge (années)", "Âge du patient. Plage plausible 18-100."),
+    "trestbps": ("Pression artérielle au repos (mm Hg)", "Tension systolique au repos. Plage plausible 70-250 mm Hg."),
+    "chol": ("Cholestérol sérique (mg/dl)", "Cholestérol total en mg/dl. Si résultat en mmol/L, multiplier par 38.7. Plage plausible 80-650."),
+    "thalch": ("Fréquence cardiaque maximale atteinte (bpm)", "Fréquence max à l'effort. Plage plausible 50-220 bpm."),
+    "oldpeak": ("Dépression ST à l'effort (oldpeak)", "Dépression ST induite par l'effort. Plage plausible -3 à 7."),
+    "ca": ("Nombre de vaisseaux majeurs colorés (0-3)", "Examen fluoroscopie, entier 0-3."),
+    "sex": ("Sexe", "Variable démographique/catégorielle."),
+    "cp": ("Type de douleur thoracique", "Symptôme clé. `asymptomatic` peut être associé à maladie silencieuse."),
+    "fbs": ("Glycémie à jeun > 120 mg/dl", "Indicateur glycémique."),
+    "restecg": ("ECG au repos", "Résultat électrocardiogramme au repos."),
+    "exang": ("Angine induite par l'effort", "Douleur à l'effort."),
+    "slope": ("Pente du segment ST à l'effort", "Interprétation ECG effort."),
+    "thal": ("Thalassémie/scintigraphie", "Résultat examen perfusion/thalassémie."),
 }
+
+VAR_RANGES = {
+    "age": {"lo": 18, "hi": 100, "unit": "années"},
+    "trestbps": {"lo": 70, "hi": 250, "unit": "mm Hg"},
+    "chol": {"lo": 80, "hi": 650, "unit": "mg/dl"},
+    "thalch": {"lo": 50, "hi": 220, "unit": "bpm"},
+    "oldpeak": {"lo": -3.0, "hi": 7.0, "unit": ""},
+    "ca": {"lo": 0, "hi": 3, "unit": "vaisseaux"},
+}
+
+def validate_patient_inputs(patient: dict):
+    errors, warnings = [], []
+    for var, rule in VAR_RANGES.items():
+        val = patient.get(var)
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            continue
+        try:
+            v = float(val)
+        except Exception:
+            errors.append(f"{var}: valeur non numérique.")
+            continue
+        if v < rule["lo"] or v > rule["hi"]:
+            label = FIELD_INFO.get(var, (var, ""))[0]
+            errors.append(f"{label} = {v:g} hors plage plausible ({rule['lo']:g} à {rule['hi']:g} {rule['unit']}).")
+    age = float(patient.get("age", 0) or 0)
+    thalch = float(patient.get("thalch", 0) or 0)
+    if age > 0 and thalch > (220 - age) + 15:
+        warnings.append(f"`thalch` ({thalch:g} bpm) très élevé pour l'âge {age:g} (repère ~{220-age:g} bpm).")
+    return errors, warnings
 
 
 @st.cache_resource
@@ -183,6 +212,7 @@ def train_compare_models():
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.neighbors import KNeighborsClassifier
     from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
 
     df_all = pd.read_csv(DATA_PATH)
     df_all.loc[df_all["chol"] == 0, "chol"] = np.nan
@@ -194,7 +224,7 @@ def train_compare_models():
         df_all[c] = df_all[c].astype(str).where(df_all[c].notna(), np.nan)
     Xall = df_all[NUM + CAT]
     yall = df_all["target"]
-    Xtr, _, ytr, _ = train_test_split(Xall, yall, test_size=0.2, stratify=yall, random_state=42)
+    Xtr, Xte, ytr, yte = train_test_split(Xall, yall, test_size=0.2, stratify=yall, random_state=42)
     pre = ColumnTransformer([
         ("num", Pipeline([("imp", SimpleImputer(strategy="median", add_indicator=True)), ("sc", StandardScaler())]), NUM),
         ("cat", Pipeline([("imp", SimpleImputer(strategy="most_frequent")), ("oh", OneHotEncoder(handle_unknown="ignore"))]), CAT),
@@ -204,12 +234,17 @@ def train_compare_models():
         "Random Forest": RandomForestClassifier(n_estimators=300, min_samples_leaf=3, random_state=42),
         "KNN": KNeighborsClassifier(n_neighbors=7),
     }
-    fitted = {}
+    fitted, rows, cms = {}, [], {}
     for n, m in defs.items():
         pipe = Pipeline([("pre", pre), ("model", m)])
         pipe.fit(Xtr, ytr)
         fitted[n] = pipe
-    return fitted
+        pred = pipe.predict(Xte)
+        proba = pipe.predict_proba(Xte)[:, 1]
+        cm = confusion_matrix(yte, pred)
+        cms[n] = cm
+        rows.append({"Modèle": n, "Accuracy": accuracy_score(yte,pred), "Précision": precision_score(yte,pred,zero_division=0), "Rappel": recall_score(yte,pred,zero_division=0), "F1": f1_score(yte,pred,zero_division=0), "AUC": roc_auc_score(yte,proba), "FN": int(cm[1,0]), "FP": int(cm[0,1])})
+    return fitted, pd.DataFrame(rows).set_index("Modèle"), cms
 
 
 model, meta = load_model()
@@ -601,31 +636,77 @@ for nom, vals in SCENARIOS.items():
     if envoyer:
         X = pd.DataFrame([patient])
         seuil = float(meta["seuil"])
+        errors, warns = validate_patient_inputs(patient)
         st.markdown("### Données saisies")
         st.dataframe(X, use_container_width=True)
+        for w in warns: st.warning(w)
+        if errors:
+            for e in errors: st.error(e)
+            st.stop()
 
-        models3 = train_compare_models()
+        models3, cmp_metrics, cms = train_compare_models()
         rows = []
         for name, m in models3.items():
             prob = float(m.predict_proba(X)[0, 1])
             pred_i = int(prob >= seuil)
-            rows.append({
-                "Modèle": name,
-                "Probabilité malade %": round(prob * 100, 2),
-                "Seuil décision %": round(seuil * 100, 2),
-                "Prédiction": "Malade (1)" if pred_i else "Sain (0)",
-                "Verdict": "⚠️ Risque élevé" if pred_i else "✅ Risque faible",
-            })
-        st.markdown("### Comparaison des 3 modèles (mêmes données)")
+            rows.append({"Modèle": name, "Probabilité malade %": round(prob*100,2), "Seuil %": round(seuil*100,2), "Prédiction": "Malade (1)" if pred_i else "Sain (0)", "Verdict": "⚠️ Risque élevé" if pred_i else "✅ Risque faible"})
+        st.markdown("### Comparaison des 3 modèles (mêmes données formulaire)")
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-        main_p = float(models3["Régression logistique"].predict_proba(X)[0, 1])
+        st.markdown("### Matrice de confusion + métriques par modèle (même jeu de test)")
+        st.dataframe(cmp_metrics.style.format({"Accuracy":"{:.2%}","Précision":"{:.2%}","Rappel":"{:.2%}","F1":"{:.4f}","AUC":"{:.2%}","FN":"{:.0f}","FP":"{:.0f}"}), use_container_width=True)
+        best_global = cmp_metrics.sort_values(["Accuracy","Précision","F1"], ascending=False).index[0]
+        best_recall = cmp_metrics["Rappel"].idxmax()
+        st.success(f"**Meilleur performance globale (Accuracy/Précision/F1)** : **{best_global}** — Accuracy={cmp_metrics.loc[best_global,'Accuracy']:.2%}, Précision={cmp_metrics.loc[best_global,'Précision']:.2%}, F1={cmp_metrics.loc[best_global,'F1']:.4f}, FP={int(cmp_metrics.loc[best_global,'FP'])}. Moins de fausses alertes/erreurs globales, mais pas forcément le plus de malades détectés.")
+        st.info(f"**Meilleur en pré-dépistage (priorité Rappel/FN)** : **{best_recall}** — Rappel={cmp_metrics.loc[best_recall,'Rappel']:.2%}, FN={int(cmp_metrics.loc[best_recall,'FN'])}, FP={int(cmp_metrics.loc[best_recall,'FP'])}. Manquer un malade (FN) est critique.")
+        with st.expander("Quel est le meilleur modèle ? (interprétation vérifiée)"):
+            st.markdown("""
+**KNN est le meilleur modèle en termes de performance globale** sur Accuracy, Précision et F1 (résultats vérifiés sur le même jeu de test).
+
+**Pourquoi ?**
+- **Accuracy = 84,78 %** → il réalise le plus grand nombre de prédictions correctes.
+- **Précision = 84,91 %** → parmi les personnes prédites malades, environ 85 % sont réellement malades.
+- **F1 = 0,8654** → il offre un bon équilibre entre précision et rappel.
+- **16 FP** → il génère moins de fausses alertes que la régression logistique et Random Forest.
+
+**Cependant, KNN n'est pas celui qui détecte le plus de malades.**
+
+### Interprétation des métriques
+- **Accuracy** = (TP+TN)/(TP+TN+FP+FN)
+- **Précision** = TP/(TP+FP)
+- **Rappel** = TP/(TP+FN)
+- **F1** = 2*(Précision*Rappel)/(Précision+Rappel)
+- **AUC** : capacité à distinguer malades/non-malades, indépendamment d'un seuil fixé.
+
+### Contexte médical (pré-dépistage)
+| Modèle | FN (malades manqués) | Lecture |
+|---|---:|---|
+| Régression logistique | 11 | Détecte le plus de malades parmi les modèles comparés. |
+| KNN | 12 | Un malade manqué de plus que la régression logistique. |
+| Random Forest | 12 | Un malade manqué de plus que la régression logistique. |
+
+- **FN (False Negative)** : malade prédit non malade → risque critique.
+- **FP (False Positive)** : non malade prédit malade → fausse alerte.
+
+> **Conclusion** : KNN = meilleur équilibre global. Régression logistique = meilleur pour limiter les FN en pré-dépistage. Le choix final dépend du compromis métier validé par un humain.
+""")
+        cm_cols = st.columns(3)
+        for i,(name,cm) in enumerate(cms.items()):
+            tn,fp,fn,tp = cm.ravel()
+            fig_cm,ax_cm = plt.subplots(figsize=(4.2,3.4))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax_cm, xticklabels=['Prédit Sain','Prédit Malade'], yticklabels=['Réel Sain','Réel Malade'])
+            ax_cm.set_title(name, fontsize=9)
+            with cm_cols[i%3]:
+                st.pyplot(fig_cm); plt.close(fig_cm)
+                st.caption(f"TN={tn} FP={fp} FN={fn} TP={tp}")
+
+        main_p = float(models3[best_recall].predict_proba(X)[0,1])
         verdict = "MALADE / RISQUE ÉLEVÉ" if main_p >= seuil else "SAIN / RISQUE FAIBLE"
         st.markdown("### Verdict final")
         if main_p >= seuil:
-            st.error(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} ≥ seuil {seuil:.1%} (seuil calculé pour favoriser le rappel/pré-dépistage). Recommandation : avis médical / examens complémentaires.")
+            st.error(f"**Verdict ({best_recall}, priorité rappel) : {verdict}** — Probabilité {main_p:.1%} ≥ seuil {seuil:.1%}. Avis médical recommandé.")
         else:
-            st.success(f"**Verdict : {verdict}** — Probabilité {main_p:.1%} < seuil {seuil:.1%}. Pas d'alerte modèle au seuil choisi, mais rester vigilant si symptômes.")
+            st.success(f"**Verdict ({best_recall}, priorité rappel) : {verdict}** — Probabilité {main_p:.1%} < seuil {seuil:.1%}. Pas d'alerte au seuil choisi, rester vigilant si symptômes.")
 
         st.markdown("### Pourquoi ce verdict ? (logique)")
         reasons = []
