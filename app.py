@@ -356,7 +356,7 @@ page = st.sidebar.radio(
     "Navigation",
     [
         "1. Contexte & Problématique",
-        "2. Processus ML (18 phases)",
+        "2. Processus ML (17 phases)",
         "3. Prédiction / Verdict",
         "4. Notebook (prioritaire)",
         "5. Soutenance VIC (plan du prof)",
@@ -434,9 +434,9 @@ Dans ce projet, la sortie du modèle est une **probabilité estimée** de maladi
 
 # -------------------- PAGE 2 --------------------
 elif page.startswith("2"):
-    st.header("2) Processus ML — les 18 phases (même découpage que le notebook)")
+    st.header("2) Processus ML — les 17 phases (même découpage que le notebook)")
     st.markdown("""
-Cette page suit **les 18 phases du notebook `heart_disease_cardiorisk.ipynb`**, dans le **même ordre**.
+Cette page suit **les 17 phases du notebook `heart_disease_cardiorisk.ipynb`**, dans le **même ordre**.
 
 > **Règle d'ordre appliquée :** nettoyage **avant** l'analyse visuelle et la corrélation ; encodage / imputation / mise à l'échelle **après** le `train_test_split`, appris sur `X_train` seulement.
 
@@ -448,12 +448,11 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
         ("2", "Compréhension structurelle", "`info`, `describe`, `value_counts` — sans rien modifier", "types, stats, modalités"),
         ("3", "Nettoyage de base **avant** visuel / corrélation", "NaN audités (3.0), zéros invalides (3.1), manquants par centre (3.2), colonnes + doublons (3.3), modalités (3.4)", "918 × 14"),
         ("4", "Cible et familles de variables", "`num` (0–4) → `target` binaire ; listes `NUM` / `CAT`", "target 0/1"),
-        ("5", "Valeurs aberrantes (IQR)", "détecter, interpréter, décider — aucune suppression à l'aveugle (nettoyage)", "tableau de décision"),
         ("6", "Analyse visuelle", "distributions, boxplots par classe, taux de maladie par modalité", "figures + lectures"),
-        ("7", "Corrélation & taux de malades", "7.1 Pearson (numériques + cible) · 7.2 taux de malades par modalité", "heatmap + tableau"),
+        ("6", "Corrélation & taux de malades", "Pearson avec/sans target (numériques) · taux de malades (catégories)", "2 heatmaps + tableau"),
         ("8", "Séparation Train / Test", "80/20 stratifié, `random_state=42`", "734 / 184"),
         ("9", "Préparation (Pipeline)", "médiane, mode, `StandardScaler`, `OneHotEncoder` — `fit` sur le train", "30 colonnes"),
-        ("10", "3 stratégies de valeurs manquantes", "suppression / médiane-mode / patient similaire (KNN) sur `ca` et `thal`", "comparatif CV"),
+        ("10", "2 stratégies de valeurs manquantes", "suppression / médiane-mode / patient similaire (KNN) sur `ca` et `thal`", "comparatif CV"),
         ("11", "Comparaison des modèles", "baseline + 5 modèles, puis vérification sur 8 modèles", "AUC + rappel"),
         ("12", "Évaluation sur le test", "matrice de confusion, ROC, R²/MAE/MSE/RMSE", "scores test"),
         ("13", "Seuil de décision", "seuil calculé pour un rappel ≥ 90 % (pas 0,50 arbitraire)", "≈ 0,41"),
@@ -472,7 +471,6 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
 | Question | Réponse |
 |---|---|
 | Pourquoi le nettoyage **avant** la corrélation ? | Un `chol = 0` impossible ou une catégorie mal écrite fausse à la fois les graphiques **et** les coefficients de corrélation. On corrige d'abord, on analyse ensuite. |
-| Alors pourquoi les **valeurs aberrantes** (Phase 5) viennent-elles après la corrélation ? | Parce que ce n'est **pas du nettoyage** : aucune ligne n'est supprimée. C'est un **contrôle** : on ne juge pas un extrême (cholestérol à 603) sans avoir vu sa distribution. |
 | Pourquoi l'**imputation** (Phases 9–10) après le split ? | Imputer avant reviendrait à calculer la médiane/le mode sur **tout** le jeu, test inclus → **fuite de données** et scores trop optimistes. Le `Pipeline` apprend ces valeurs sur `X_train` uniquement. |
 | Et la corrélation, elle utilise quelles données ? | Les données **nettoyées** (Phase 3). Pour les catégories, une copie d'analyse les remplit par le mode : c'est autorisé pour un graphique, jamais pour entraîner un modèle. |
 """)
@@ -565,29 +563,9 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
 CAT = {CAT_APP}
 df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", language="python")
 
-    # --- Phase 5 ---
-    st.subheader("Phase 5 — Valeurs aberrantes (règle IQR) : détecter, puis décider")
-    st.markdown("""
-**Action** : signaler tout patient hors de `[Q1 − 1,5 × IQR ; Q3 + 1,5 × IQR]` pour chaque variable numérique.
-**Utilité** : repérer les valeurs extrêmes, sans les supprimer automatiquement : un cholestérol à 603 mg/dL ou une tension à 200 mmHg sont extrêmes mais **cliniquement possibles**.
-**C'est du nettoyage, et il est placé AVANT l'analyse visuelle et la corrélation** : on décide du sort des valeurs extrêmes, puis on interprète les graphiques. Aucune ligne n'est finalement retirée.
-""")
-    iqr_rows = []
-    for col in NUM_APP:
-        q1, q3 = d[col].quantile([0.25, 0.75])
-        lo, hi = q1 - 1.5 * (q3 - q1), q3 + 1.5 * (q3 - q1)
-        iqr_rows.append({
-            "Variable": col,
-            "Borne basse": round(lo, 1),
-            "Borne haute": round(hi, 1),
-            "Hors bornes": int(((d[col] < lo) | (d[col] > hi)).sum()),
-            "Décision": "règle non applicable (discrète)" if col == "ca" else "conserver (plausible)",
-        })
-    show_table(iqr_rows, ["Variable", "Borne basse", "Borne haute", "Hors bornes", "Décision"])
-    st.caption("**Interprétation** : aucune ligne n'est supprimée. Les valeurs extrêmes sont porteuses d'information (patients les plus malades) ; le `StandardScaler` du pipeline limite leur influence et les arbres y sont insensibles.")
+    # --- Phase 5 (anciennement 6) ---
 
-    # --- Phase 6 ---
-    st.subheader("Phase 6 — Analyse visuelle (après nettoyage, avant corrélation)")
+    st.subheader("Phase 5 — Analyse visuelle (après nettoyage, avant corrélation)")
     st.markdown("**Utilité** : comprendre les relations variable-cible avant modélisation. Chaque graphique répond à une question.")
 
     fig_age, axes_age = plt.subplots(1, 2, figsize=(11, 4))
@@ -622,9 +600,15 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
     show_fig(fig_c, "**Nom** : barplots du taux de maladie par catégorie. **Utilité** : identifier les modalités à risque. **Lecture** : hauteur = proportion de malades dans la modalité. **Interprétation** : `cp = asymptomatic`, `exang = True`, `thal` anormal, `slope` flat/downsloping sont associés à un taux de maladie plus élevé.")
 
     # --- Phase 7 ---
-    st.subheader("Phase 7 — Corrélation de Pearson (numériques) et taux de malades (catégories)")
+    st.subheader("Phase 6 — Corrélation de Pearson (numériques) et taux de malades (catégories)")
     st.markdown("""
-**Règle** : une seule mesure ne peut pas couvrir les trois situations. Un coefficient de Pearson sur `cp` codée 0-1-2-3 ne mesure que l'ordre de numérotation (démonstration faite dans le notebook). On sépare donc :
+**Règle** : Pearson s'applique aux variables numériques. Les catégorielles sont décrites par taux de malades par modalité.
+
+**Réponses attendues à l'oral** :
+- *Features fortement liés à target* : `ca` (0,456), `thalch` (-0,393), `oldpeak` (0,386), puis `age` (0,282). Catégorielles : `cp` asymptomatic 79 %, `exang` 83,6 %, `thal` anormal ~76–80 %.
+- *On élimine des colonnes ?* Non, on garde les 13 variables cliniques. `id/dataset` retirés au nettoyage. Pas de redondance forte (|r|<0,40 entre features).
+- *Choix des features* : variables cliniques disponibles avant examen approfondi ; confirmées par permutation importance.
+- *Missing values* : audit/correction zéros **avant** EDA/corrélation ; imputation modèle **après split** dans le pipeline (pas de fuite).
 
 | Étape | Variables | Méthode | Encodage ? |
 |---|---|---|---|
@@ -669,7 +653,7 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
     st.info("**Pourquoi pas de coefficient sur les catégories ?** Un coefficient compare des écarts entre nombres ; une catégorie n'en a pas. On lit donc des proportions, et l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` 0,061 d'AUC, `chol` 0,031, `oldpeak` 0,026.")
 
     # --- Phase 8 ---
-    st.subheader("Phase 8 — Séparation Train / Test (avant tout apprentissage)")
+    st.subheader("Phase 7 — Séparation Train / Test (avant tout apprentissage)")
     n_test = int(round(d.shape[0] * 0.2))
     s1, s2, s3 = st.columns(3)
     s1.metric("Train (80 %)", d.shape[0] - n_test)
@@ -682,7 +666,7 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
 """)
 
     # --- Phase 9 ---
-    st.subheader("Phase 9 — Préparation des variables (apprise sur le train uniquement)")
+    st.subheader("Phase 8 — Préparation des variables (apprise sur le train uniquement)")
     st.markdown("""
 **Utilité** : rendre les données utilisables par les modèles et éviter la fuite de données.
 
@@ -732,19 +716,18 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.warning("La version simple est bonne pour comprendre. Dans le projet, on préfère la version **Pipeline/ColumnTransformer** car elle évite la fuite de données : le `fit` (médiane/mode/scale/encoder) se fait **sur le train uniquement**, puis on applique au test/app.")
 
     # --- Phase 10 ---
-    st.subheader("Phase 10 — Valeurs manquantes : les 3 stratégies comparées")
+    st.subheader("Phase 9 — Valeurs manquantes : 2 stratégies comparées")
     st.markdown("""
 `ca` (66 % manquants) et `thal` (53 %) sont les deux colonnes critiques. Le notebook compare **3 solutions** sur le même split, avec le même `RandomForestClassifier` et une validation croisée 5-fold :
 
 | Stratégie | Idée | Traitement de `ca` / `thal` |
 |---|---|---|
-| **1. Suppression** | retirer les colonnes trop incomplètes | colonnes supprimées |
 | **2. Médiane / mode** (retenue) | remplacer par une valeur typique | `ca` = médiane, `thal` = mode |
 | **3. Patient similaire (KNN)** | copier la valeur des patients les plus proches | `KNNImputer` sur les autres variables |
 """)
     st.markdown("**Comparaison avec le modèle livré (régression logistique, seuil 0,50) — critères du projet : rappel, puis R²**")
     show_table([
-        ("1. Suppression ca/thal", "91 / 63 / 19 / 11", 0.8922, 0.5409, 0.4334, 0.9200),
+        ("(retiré)", "91 / 63 / 19 / 11", 0.8922, 0.5409, 0.4334, 0.9200),
         ("2. Médiane / mode (livrée)", "92 / 64 / 18 / 10", 0.9020, 0.5680, 0.4554, 0.9267),
         ("3. Patient similaire (KNN)", "92 / 65 / 17 / 10", 0.9020, 0.5743, 0.4696, 0.9249),
     ], ["Stratégie", "TP/TN/FP/FN", "Rappel", "R² (proba)", "CV R²", "ROC-AUC"])
@@ -763,7 +746,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.info("Résultats mesurés dans le notebook, **Phase 10** (même split, `random_state=42`).")
 
     # --- Phase 11 ---
-    st.subheader("Phase 11 — Comparaison des modèles (validation croisée sur le train)")
+    st.subheader("Phase 10 — Comparaison des modèles (validation croisée sur le train)")
     st.markdown("""
 - **Préparation identique** pour tous (même `Pipeline`), **même validation croisée 5-fold**.
 - **Baseline** (`DummyClassifier`) : prédit toujours la classe majoritaire (55 %) — tout modèle doit faire nettement mieux.
@@ -783,7 +766,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.caption("**Interprétation** : aucune famille ajoutée ne dépasse la régression logistique. Le SVM a une AUC quasi identique (0,879) mais reste moins interprétable. L'arbre seul est le plus faible (0,804) : un arbre unique est instable, les ensembles le corrigent.")
 
     # --- Phase 12 ---
-    st.subheader("Phase 12 — Évaluation sur le jeu test (une seule fois)")
+    st.subheader("Phase 11 — Évaluation sur le jeu test (une seule fois)")
     st.markdown("""
 | Métrique | Définition simple | Comment lire | Dans notre cas |
 |---|---|---|---|
@@ -814,7 +797,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.caption("**Interprétation** : sur 184 patients (82 sains, 102 malades), la régression logistique détecte 92 malades sur 102 (**rappel 0,902**) en alertant à tort 18 sains (**précision 0,836**) ; Random Forest et KNN en détectent 89 (0,873) avec respectivement 18 et 14 fausses alertes. Les **FN** sont l'erreur critique : ce sont eux que le seuil abaissé à 0,41 fait passer de 10 à 8. Le R² (0,568 sur la probabilité) résume la qualité d'ensemble mais ne dit pas combien de malades ont été manqués : c'est pourquoi la décision se lit avec la matrice + le rappel.")
 
     # --- Phase 13 ---
-    st.subheader("Phase 13 — Choix du seuil de décision")
+    st.subheader("Phase 12 — Choix du seuil de décision")
     q1, q2 = st.columns(2)
     q1.metric("Seuil par défaut", "0,50")
     q2.metric("Seuil retenu (model_meta.json)", f"{float(meta['seuil']):.3f}".replace(".", ","))
@@ -825,7 +808,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 """)
 
     # --- Phase 14 ---
-    st.subheader("Phase 14 — Contrôle visuel : réel vs prédit (test)")
+    st.subheader("Phase 13 — Contrôle visuel : réel vs prédit (test)")
     st.markdown("""
 **Ce que montre la figure du notebook** : chaque point = un patient du test ; axe X = classe réelle (0/1, légèrement étalée pour éviter les superpositions), axe Y = probabilité prédite ; la ligne rouge est le seuil.
 **Comment lire** : au-dessus du seuil = prédit « malade ». Les points rouges en bas à droite sont des **faux négatifs** (malades classés sains) ; les points orange en haut à gauche des **faux positifs**.
@@ -833,7 +816,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 """)
 
     # --- Phase 15 ---
-    st.subheader("Phase 15 — Importance des variables (permutation)")
+    st.subheader("Phase 14 — Importance des variables (permutation)")
     st.markdown("""
 **Principe** : on mélange au hasard une variable dans le test et on mesure la baisse d'AUC. Plus la baisse est forte, plus la variable est importante.
 **Pourquoi cette méthode** : elle fonctionne pour tous les modèles, contrairement aux coefficients (modèles linéaires seulement) et aux importances Gini (biaisées vers les variables à nombreuses modalités).
@@ -850,7 +833,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 """)
 
     # --- Phase 16 ---
-    st.subheader("Phase 16 — Test sur de nouvelles données (formulaire)")
+    st.subheader("Phase 15 — Test sur de nouvelles données (formulaire)")
     st.markdown("""
 - **Ce qu'on teste** : des patients fictifs saisis comme dans un formulaire, **hors** train et test, pour vérifier le comportement opérationnel.
 - **3 modèles** (régression logistique, Random Forest, KNN) reçoivent **exactement les mêmes données** : on compare probabilité, classe et décision par seuil.
@@ -858,7 +841,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 """)
 
     # --- Phase 17 ---
-    st.subheader("Phase 17 — Export du pipeline et déploiement")
+    st.subheader("Phase 16 — Export du pipeline et déploiement")
     st.markdown("""
 - **Règle** : on exporte le **pipeline complet** (préparation + modèle), pas seulement le modèle — sinon il faudrait refaire l'imputation et l'encodage à la main dans l'app, avec un risque d'écart.
 - **`model.joblib`** : pipeline entraîné sur **toutes** les données (après évaluation).
@@ -875,7 +858,7 @@ proba = model.predict_proba(X_new)[:, 1]""", language="python")
     st.info("**Joblib vs JSON dans notre cas** : `joblib` est meilleur pour sauvegarder le pipeline/modèle sklearn entraîné (objet Python complexe). `JSON` est mieux pour des métadonnées lisibles : seuil, colonnes, min/max/médiane, catégories, citation. On utilise donc **les deux**.")
 
     # --- Phase 18 ---
-    st.subheader("Phase 18 — Conclusion")
+    st.subheader("Phase 17 — Conclusion")
     st.markdown("""
 ### Les deux réponses clés
 
@@ -903,7 +886,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
 - **Q2 — Variables les plus contributives** (permutation) : `cp` très loin devant, puis `chol`, `oldpeak`, `ca`, `exang`. `age` et `thalch` ressortent à ≈ 0 (information déjà portée par les autres variables).
 - **Q3 — Capacité prédictive** : AUC test **0,927** (CV 0,883), accuracy **0,848**, rappel 0,902 (baseline 0,55).
 - **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864), arbre (0,804) et baseline (0,500).
-- **Q4bis — Valeurs manquantes** : **KNN et médiane/mode se valent** sur les critères du projet (rappel identique 0,902 → 10 FN ; R² **0,5743 KNN** contre 0,5680 ; CV R² 0,4696 contre 0,4554 ; AUC 0,9249 contre 0,9267). IC bootstrap contenant 0 → pas de gagnant démontré. La médiane/mode reste **livrée** pour sa simplicité et la transparence de ses valeurs ; le KNN est pénalisé par sa moyenne de codes sur `thal` (50,9 % de `fixed defect` contre 10,9 % en réel). Suppression derrière (rappel 0,8922, 11 FN).
+- **Q4bis — Valeurs manquantes** : **KNN et médiane/mode se valent** sur le critère prioritaire (rappel identique 0,902 → 10 FN ; R² 0,5743 KNN contre 0,5680 ; IC bootstrap se recoupent). On livre **médiane/mode** pour simplicité et traçabilité ; le KNN a une limite sur `thal` (moyenne de codes sur une variable nominale).
 - **Q5 — Fiabilité** : rappel 0,90 au seuil 0,50 (10 faux négatifs / 102 malades, 18 faux positifs / 82 sains) et **0,92 au seuil 0,41** (8 faux négatifs, 23 faux positifs) ; **aide à la décision, avec validation humaine**.
 - **Limites** : 918 patients (920 lignes brutes − 2 doublons exacts), 4 centres, `ca`/`thal` très incomplètes, données rétrospectives. **Perspectives** : validation externe, calibration des probabilités, suivi de dérive du modèle.
 """)
@@ -947,7 +930,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
             ("8. Retrain & update", "Réentraîner/MAJ", "nouvelles données, monitoring, nouvelle version"),
         ]
         st.table(pd.DataFrame(ml_steps, columns=["Step (EN)", "Étape (FR)", "Détail"]))
-        st.caption("Ces 8 étapes génériques se déclinent en 18 phases détaillées dans ce projet.")
+        st.caption("Ces 8 étapes génériques se déclinent en 17 phases détaillées dans ce projet.")
 
 
 # -------------------- PAGE 3 --------------------
@@ -1104,7 +1087,7 @@ for nom, vals in SCENARIOS.items():
 **Couleurs** : vert = correct, orange = FP, rouge = FN. Les points rouges en bas à droite sont les plus critiques ici.
 """)
 
-        with st.expander("Comparaison 3 stratégies valeurs manquantes (ca, thal) — même RandomForest final"):
+        with st.expander("Comparaison 2 stratégies valeurs manquantes (ca, thal) — même RandomForest final"):
             @st.cache_data
             def compare_missing_strategies():
                 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
@@ -1149,9 +1132,6 @@ for nom, vals in SCENARIOS.items():
                     return {f'CV {k}': float(sc[f'test_{k}'].mean()) for k in ['Accuracy', 'Precision', 'Recall', 'F1', 'ROC-AUC']}
 
                 # Exp 1 — supprimer ca et thal
-                Xtr1, Xte1 = Xtr.drop(columns=['ca', 'thal']), Xte.drop(columns=['ca', 'thal'])
-                num1 = [c for c in NUM_ALL if c != 'ca']
-                cat1 = [c for c in CAT_ALL if c != 'thal']
                 m1 = evalp(Pipeline([('pre', preproc(num1, cat1)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr1, ytr, Xte1, yte)
                 m1.update(cv_pipe(Pipeline([('pre', preproc(num1, cat1)), ('rf', RandomForestClassifier(n_estimators=300, random_state=RS, n_jobs=-1))]), Xtr1, ytr))
 
@@ -1217,7 +1197,6 @@ for nom, vals in SCENARIOS.items():
                 m3.update(cv_similarity(Xtr, ytr))
 
                 return pd.DataFrame({
-                    'Exp 1 - Suppression ca,thal': m1,
                     'Exp 2 - Médiane/mode (baseline)': m2,
                     'Exp 3 - Patient similaire (KNN)': m3,
                 }).T.round(4)
@@ -1333,7 +1312,7 @@ Sur le jeu UCI Heart Disease, les travaux courants utilisent la régression logi
 | Imputation/encodage fait avant le split | **Fuite de données** : le test influence le prétraitement | Pipeline scikit-learn ajusté sur `X_train` uniquement |
 | `LabelEncoder` sur des catégories nominales | Crée un faux ordre (`cp=3 > cp=1`) | `OneHotEncoder` après le split, dans le pipeline |
 | Accuracy seule | Cache les malades manqués | Rappel, matrice de confusion, AUC, R²/MAE/MSE/RMSE |
-| Suppression brute des lignes manquantes | Perte d'information (`ca`/`thal` très incomplets) | Comparaison de 3 stratégies d'imputation |
+| Suppression brute des lignes manquantes | Perte d'information (`ca`/`thal` très incomplets) | Comparaison de 2 stratégies d'imputation |
 """)
 
     st.markdown("## 4. Formulation du problème")
