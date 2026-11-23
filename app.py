@@ -45,11 +45,11 @@ FIELD_INFO = {
 
 # Force du lien avec la maladie (Phase 7.4 du notebook) : sert à expliquer quels champs font bouger le verdict
 INFLUENCE = {
-    "cp": "très forte (+0,064 AUC)", "chol": "forte (+0,035)", "oldpeak": "forte (+0,027)",
-    "thal": "moyenne (+0,015)", "ca": "moyenne (+0,014)", "sex": "moyenne (+0,011)",
-    "exang": "moyenne (+0,010)", "trestbps": "moyenne (+0,008)", "thalch": "moyenne (+0,006)",
-    "fbs": "faible (+0,004)", "age": "très faible (+0,000)", "slope": "très faible (−0,001)",
-    "restecg": "très faible (−0,001)",
+    "cp": "très forte (0,061 d'AUC)", "chol": "forte (0,031)", "oldpeak": "forte (0,026)",
+    "ca": "moyenne (0,015)", "exang": "moyenne (0,014)", "thal": "moyenne (0,013)",
+    "sex": "moyenne (0,012)", "trestbps": "faible (0,003)", "fbs": "faible (0,002)",
+    "age": "très faible (0,000)", "thalch": "très faible (0,000)",
+    "slope": "négligeable (−0,003)", "restecg": "négligeable (−0,003)",
 }
 
 # Deux profils cliniques réels pour la démonstration (un malade, un sain)
@@ -109,17 +109,27 @@ def load_data():
     return df
 
 
+CAT_ALL = ("sex", "cp", "fbs", "restecg", "exang", "slope", "thal")
+
+
 @st.cache_data
 def clean_data():
     """Phase 3 : nettoyage de base, AVANT toute analyse visuelle ou corrélation.
 
     - `chol = 0` et `trestbps = 0` sont impossibles -> valeurs manquantes
     - `id` (numéro) et `dataset` (hôpital d'origine) ne sont pas des prédicteurs
+    - doublons exacts retirés (920 -> 918), comme dans le notebook
+    - espaces parasites retirés dans les modalités catégorielles
     """
     d = load_data()
     for col in ("chol", "trestbps"):
         d.loc[d[col] == 0, col] = np.nan
-    return d.drop(columns=[c for c in ("id", "dataset") if c in d.columns])
+    d = d.drop(columns=[c for c in ("id", "dataset") if c in d.columns])
+    d = d.drop_duplicates().reset_index(drop=True)
+    for col in CAT_ALL:
+        d[col] = (d[col].dropna().astype(str).str.strip()
+                  .str.replace(r"\s+", " ", regex=True).reindex(d.index))
+    return d
 
 
 def render_notebook(path: Path):
@@ -148,7 +158,7 @@ def render_notebook(path: Path):
                         st.text(txt)
                 elif otype in {"execute_result", "display_data"}:
                     if "text/html" in data:
-                        st.components.v1.html("".join(data["text/html"]), height=320, scrolling=True)
+                        st.html("".join(data["text/html"]))
                     elif "image/png" in data:
                         img = data["image/png"]
                         img = "".join(img) if isinstance(img, list) else img
@@ -260,7 +270,7 @@ def show_fig(fig, caption: str | None = None):
 
 def show_table(rows, columns):
     """Affiche une liste de tuples sous forme de tableau sans index."""
-    st.dataframe(pd.DataFrame(rows, columns=columns), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows, columns=columns), width="stretch", hide_index=True)
 
 
 @st.cache_resource
@@ -361,12 +371,13 @@ if page.startswith("1"):
 
     st.subheader("Contexte général")
     st.markdown("""
-Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les professionnels ont besoin d'un outil d'aide au **dépistage** (repérage précoce/priorisation des patients à risque) pour orienter vers un examen médical.
+Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Un outil qui **estime une probabilité de maladie** à partir de variables cliniques simples permet d'**objectiver les facteurs de risque** et de **prioriser les examens**.
 
-**Dépistage / pré-dépistage (définitions simples) :**
-- **Dépistage** : repérer tôt les personnes qui ont probablement un risque, pour les orienter vers des examens/avis médical.
-- **Pré-dépistage / triage** : étape encore plus en amont, rapide, pour prioriser qui doit être contrôlé en priorité.
-- **Ce projet** : prototype pédagogique de pré-dépistage/dépistage assisté par données. Il **ne pose pas de diagnostic médical** et ne remplace pas un médecin.
+**Ce que fait le modèle :**
+- il estime une **probabilité de maladie coronarienne** à partir de 13 variables disponibles avant un examen approfondi ;
+- il **hiérarchise les patients** à examiner en priorité et explique **quelles variables pèsent**.
+
+**Ce qu'il ne fait pas** : il n'établit pas de diagnostic et ne remplace pas un professionnel de santé.
 
 **Domaine :** santé / aide à la décision / classification binaire.
 """)
@@ -380,26 +391,23 @@ Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les prof
 - **Q2.** Quelles variables contribuent le plus à la prédiction ?
 - **Q3.** Quelle est la capacité prédictive du modèle (AUC, rappel, métriques VIC) ?
 - **Q4.** Quel modèle choisir (baseline, régression logistique, arbre, KNN, Random Forest) ?
-- **Q5.** Le modèle est-il fiable pour le pré-dépistage ? Quel seuil de décision choisir pour limiter les malades manqués, et quel compromis accepter ?
+- **Q5.** Le modèle est-il fiable ? Quel seuil de décision choisir pour limiter les malades manqués, et quel compromis accepter ?
 """)
 
     st.subheader("Définitions simples (jargon)")
     st.markdown("""
 | Terme | Définition simple |
 |---|---|
-| **Dépistage** | Repérer tôt les personnes potentiellement à risque pour les orienter vers un médecin/examen. |
-| **Pré-dépistage / triage** | Filtre rapide en amont pour prioriser les personnes à contrôler. Ce n'est pas un diagnostic. |
-| **Diagnostic** | Décision médicale faite par un professionnel avec examens cliniques. Le modèle ne fait pas ça. |
 | **Probabilité** | Score entre 0% et 100% estimé par le modèle : plus c'est élevé, plus le profil ressemble aux cas malades vus à l'entraînement. |
 | **Seuil de décision** | Règle de conversion probabilité → classe. Ex: si probabilité ≥ seuil alors "risque élevé". Le seuil est calculé, pas arbitraire. |
-| **Faux négatif** | Malade prédit sain — dangereux en dépistage. |
+| **Faux négatif** | Malade prédit sain — l'erreur la plus coûteuse ici. |
 | **Faux positif** | Sain prédit malade — fausse alerte, entraîne un contrôle supplémentaire. |
 | **Recall/Rappel** | % de vrais malades détectés. Prioritaire ici. |
 """)
 
     st.subheader("Processus ML (même schéma que le notebook)")
     proc_img = process_figure()
-    st.image(proc_img, use_container_width=True)
+    st.image(proc_img, width="stretch")
     st.caption("Même image/schéma que le notebook CardioRisk : de la donnée brute à l’export (model.joblib/model_meta.json) puis l’app Streamlit.")
 
     st.subheader("Description des variables")
@@ -407,8 +415,8 @@ Les maladies cardiovasculaires sont un enjeu majeur de santé publique. Les prof
     for col, (label, meaning) in FIELD_INFO.items():
         kind = "Numérique" if col in meta["num"] else "Catégorielle"
         var_rows.append({"Variable": col, "Nom lisible": label, "Type": kind, "Description / utilité": meaning})
-    var_rows.append({"Variable": "num / target", "Nom lisible": "Diagnostic cible", "Type": "Cible", "Description / utilité": "`num` 0-4 dans le dataset brut. On crée `target=1` si `num>0` (maladie), sinon `0` (sain)."})
-    st.dataframe(pd.DataFrame(var_rows), use_container_width=True, hide_index=True)
+    var_rows.append({"Variable": "num / target", "Nom lisible": "Cible (`num` / `target`)", "Type": "Cible", "Description / utilité": "`num` 0-4 dans le dataset brut. On crée `target=1` si `num>0` (maladie), sinon `0` (sain)."})
+    st.dataframe(pd.DataFrame(var_rows), width="stretch", hide_index=True)
 
     st.subheader("Logique : quand dit-on qu'une personne est malade ?")
     st.markdown("""
@@ -419,8 +427,8 @@ Dans ce projet, la sortie du modèle est une **probabilité estimée** de maladi
 - **Seuil de décision** : règle pour transformer une probabilité en décision.
   - Exemple par défaut : seuil 0.50 (50%). Mais ce n'est pas obligatoire.
   - Dans notre cas, on choisit un seuil **plus bas que 0.50** (calculé sur validation croisée du train, puis appliqué au test) pour **attraper plus de vrais malades**.
-  - Conséquence : moins de malades manqués (**faux négatifs** ↓), mais plus de fausses alertes (**faux positifs** ↑). Ce compromis est acceptable en pré-dépistage, car une alerte peut mener à un contrôle médical.
-- **Pourquoi un seuil plus bas ?** En dépistage, manquer un malade (faux négatif) est plus grave qu'une fausse alerte (faux positif). On privilégie donc le **rappel** (sensibilité = part de malades détectés). La valeur exacte du seuil doit être **calculée et justifiée**, pas choisie au hasard.
+  - Conséquence : moins de malades manqués (**faux négatifs** ↓), mais plus de fausses alertes (**faux positifs** ↑). Ce compromis est assumé ici : une alerte mène à un examen, un malade manqué passe inaperçu.
+- **Pourquoi un seuil plus bas ?** Manquer un malade (faux négatif) est plus grave qu'une fausse alerte (faux positif). On privilégie donc le **rappel** (sensibilité = part de malades détectés). La valeur exacte du seuil doit être **calculée et justifiée**, pas choisie au hasard.
 - **Verdict final** : toujours indicatif. **Validation humaine / avis médical obligatoire**.
 """)
 
@@ -438,7 +446,7 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
     PHASES = [
         ("1", "Chargement des données", "lire le CSV brut dans `df`", "920 lignes brutes × 16"),
         ("2", "Compréhension structurelle", "`info`, `describe`, `value_counts` — sans rien modifier", "types, stats, modalités"),
-        ("3", "Nettoyage de base **avant** visuel / corrélation", "NaN diagnostiqués, catégories harmonisées (3.1), zéros invalides (3.2), colonnes inutiles + doublons (3.3)", "918 × 14"),
+        ("3", "Nettoyage de base **avant** visuel / corrélation", "NaN audités (3.0), zéros invalides (3.1), manquants par centre (3.2), colonnes + doublons (3.3), modalités (3.4)", "918 × 14"),
         ("4", "Cible et familles de variables", "`num` (0–4) → `target` binaire ; listes `NUM` / `CAT`", "target 0/1"),
         ("5", "Valeurs aberrantes (IQR)", "détecter, interpréter, décider — aucune suppression à l'aveugle (nettoyage)", "tableau de décision"),
         ("6", "Analyse visuelle", "distributions, boxplots par classe, taux de maladie par modalité", "figures + lectures"),
@@ -464,7 +472,7 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
 | Question | Réponse |
 |---|---|
 | Pourquoi le nettoyage **avant** la corrélation ? | Un `chol = 0` impossible ou une catégorie mal écrite fausse à la fois les graphiques **et** les coefficients de corrélation. On corrige d'abord, on analyse ensuite. |
-| Alors pourquoi les **valeurs aberrantes** (Phase 7) viennent-elles après la corrélation ? | Parce que ce n'est **pas du nettoyage** : aucune ligne n'est supprimée. C'est un **diagnostic** : on ne juge pas un extrême (cholestérol à 603) sans avoir vu sa distribution. |
+| Alors pourquoi les **valeurs aberrantes** (Phase 5) viennent-elles après la corrélation ? | Parce que ce n'est **pas du nettoyage** : aucune ligne n'est supprimée. C'est un **contrôle** : on ne juge pas un extrême (cholestérol à 603) sans avoir vu sa distribution. |
 | Pourquoi l'**imputation** (Phases 9–10) après le split ? | Imputer avant reviendrait à calculer la médiane/le mode sur **tout** le jeu, test inclus → **fuite de données** et scores trop optimistes. Le `Pipeline` apprend ces valeurs sur `X_train` uniquement. |
 | Et la corrélation, elle utilise quelles données ? | Les données **nettoyées** (Phase 3). Pour les catégories, une copie d'analyse les remplit par le mode : c'est autorisé pour un graphique, jamais pour entraîner un modèle. |
 """)
@@ -488,7 +496,7 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
     c2.metric("Colonnes brutes", raw.shape[1] - 1)  # hors cible ajoutée
     c3.metric("Sains (0)", int((raw["target"] == 0).sum()))
     c4.metric("Malades (1)", int((raw["target"] == 1).sum()))
-    st.dataframe(raw.head(8), use_container_width=True)
+    st.dataframe(raw.head(8), width="stretch")
 
     # --- Phase 2 ---
     st.subheader("Phase 2 — Compréhension structurelle (sans modification)")
@@ -500,8 +508,8 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
     with st.expander("Statistiques descriptives (describe) — données brutes"):
         desc = raw.describe(include="all").T
         desc["top"] = desc["top"].map(lambda v: "" if pd.isna(v) else str(v))  # bool + texte -> texte
-        st.dataframe(desc, use_container_width=True)
-        st.caption("`chol` : minimum 0 → impossible. Ce sont des manquants déguisés, corrigés en Phase 3.2.")
+        st.dataframe(desc, width="stretch")
+        st.caption("`chol` : minimum 0 → impossible. Ce sont des manquants déguisés, corrigés en Phase 3.1.")
     with st.expander("Types, valeurs non nulles et modalités (info / value_counts)"):
         types_df = pd.DataFrame({
             "type": raw.dtypes.astype(str),
@@ -509,7 +517,7 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
             "manquantes": raw.isna().sum(),
             "modalités": raw.nunique(),
         })
-        st.dataframe(types_df, use_container_width=True)
+        st.dataframe(types_df, width="stretch")
         st.caption("Colonnes complètes : `id`, `age`, `sex`, `dataset`, `cp`, `num`. Les plus incomplètes : `ca` (66 %), `thal` (53 %), `slope` (34 %).")
 
     # --- Phase 3 ---
@@ -517,15 +525,16 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
     st.markdown("""
 | Étape | Action | Pourquoi |
 |---|---|---|
-| **3.0** | Diagnostiquer les valeurs manquantes (nombre + %) | savoir combien manque et où avant de choisir une méthode |
-| **3.1** | **Harmoniser les catégories** : espaces parasites, doublons de casse, modalités rares | deux écritures d'une même catégorie fausseraient graphiques, moyennes et encodage |
-| **3.2** | Remplacer les valeurs **impossibles** (`chol = 0`, `trestbps = 0`) par `NaN` | ce sont des manquants codés « 0 » |
-| **3.3** | Supprimer `id` et `dataset`, vérifier les doublons | pas de prédicteur sans information médicale ni de fuite de contexte |
+| **3.0** | Auditer les valeurs manquantes (nombre + %) | savoir combien manque et où avant de choisir une méthode |
+| **3.1** | Remplacer les valeurs **impossibles** (`chol = 0`, `trestbps = 0`) par `NaN` | ce sont des manquants codés « 0 » |
+| **3.2** | Vérifier la répartition des manquants entre les 4 centres | un examen mesuré dans un seul hôpital ne vaut que pour lui |
+| **3.3** | Supprimer `id` et `dataset`, retirer les **2 doublons exacts** | pas de prédicteur sans information médicale ni de fuite de contexte ; un profil compté deux fois pèserait double |
+| **3.4** | **Harmoniser les modalités** : espaces parasites, libellés attendus | deux écritures d'une même catégorie fausseraient graphiques, moyennes et encodage |
 
 > L'**imputation** et l'**encodage** ne se font pas ici : ils sont appris sur `X_train` seulement (Phase 9).
 """)
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Doublons", int(d.drop(columns="target").duplicated().sum()))
+    k1.metric("Doublons retirés", int(raw.drop(columns="target").duplicated().sum()), "920 → 918")
     k2.metric("chol == 0 corrigés", int((raw["chol"] == 0).sum()))
     k3.metric("trestbps == 0 corrigés", int((raw["trestbps"] == 0).sum()))
     k4.metric("Colonnes conservées", d.shape[1] - 1)  # hors cible
@@ -542,7 +551,7 @@ Pour chaque graphique : **nom / utilité / comment lire / interprétation**.
     st.subheader("Phase 4 — Variable cible et familles de variables")
     st.markdown("""
 **Action** : `target = 1` si `num > 0`, sinon `0` ; puis classer les variables en `NUM` (6) et `CAT` (7).
-**Utilité** : `num` va de 0 à 4 (stades) ; le pré-dépistage est une question **binaire**. Les deux familles seront traitées différemment dans le pipeline.
+**Utilité** : `num` va de 0 à 4 (stades) ; la question posée est **binaire**. Les deux familles seront traitées différemment dans le pipeline.
 """)
     counts = d["target"].value_counts().sort_index()
     fig_t, ax_t = plt.subplots(figsize=(5, 3.5))
@@ -586,7 +595,8 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
         axes_age[0].hist(d.loc[d["target"] == t, "age"].dropna(), bins=15, alpha=0.5, label=label, color=color)
     axes_age[0].set_title("Âge par cible (histogramme)")
     axes_age[0].set_xlabel("Âge"); axes_age[0].set_ylabel("Nombre"); axes_age[0].legend()
-    sns.boxplot(data=d, x="target", y="age", ax=axes_age[1], palette=["#4C78A8", "#E45756"])
+    sns.boxplot(data=d, x="target", y="age", hue="target", ax=axes_age[1],
+                palette=["#4C78A8", "#E45756"], legend=False)
     axes_age[1].set_title("Âge par cible (boxplot)")
     axes_age[1].set_xticks([0, 1]); axes_age[1].set_xticklabels(["Sain (0)", "Malade (1)"])
     plt.tight_layout()
@@ -594,7 +604,8 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
 
     fig_b, axes_b = plt.subplots(2, 3, figsize=(13, 6))
     for ax, col in zip(axes_b.ravel(), NUM_APP):
-        sns.boxplot(data=d, x="target", y=col, ax=ax, palette=["#4C78A8", "#E45756"])
+        sns.boxplot(data=d, x="target", y=col, hue="target", ax=ax,
+                    palette=["#4C78A8", "#E45756"], legend=False)
         ax.set_title(col); ax.set_xticks([0, 1]); ax.set_xticklabels(["Sain", "Malade"])
     plt.tight_layout()
     show_fig(fig_b, "**Nom** : boxplots numériques par cible. **Utilité** : comparer médiane, dispersion, outliers entre sains/malades. **Lecture** : boîte = Q1–Q3, trait = médiane, points = outliers. **Interprétation** : `thalch` plus bas chez les malades, `oldpeak`/`ca` plus élevés ; `chol`/`trestbps` se chevauchent beaucoup.")
@@ -644,18 +655,18 @@ df["target"] = (df["num"] > 0).astype(int)   # 0 = sain, 1 = maladie""", languag
     tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
     c71, c72 = st.columns(2)
     with c71:
-        st.dataframe(tc.rename("r avec target").to_frame(), use_container_width=True)
+        st.dataframe(tc.rename("r avec target").to_frame(), width="stretch")
     with c72:
         pairs = corr_num.where(np.triu(np.ones(corr_num.shape, dtype=bool), k=1)).stack()
         pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(6)
-        st.dataframe(pairs.rename("r (entre features)").to_frame(), use_container_width=True)
+        st.dataframe(pairs.rename("r (entre features)").to_frame(), width="stretch")
     st.caption("**Interprétation 7.1** : avec la maladie, `ca` **+0,456** (309 patients seulement), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, puis `chol` 0,119 et `trestbps` 0,115. Entre variables : `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282 — **aucune paire ne dépasse |r| = 0,40**, donc pas de redondance. `age` est au centre de 4 paires : facteur de confusion classique.")
 
     st.markdown("#### 7.2 — Variables catégorielles : taux de malades par modalité")
-    st.dataframe(taux_modalites_table(d), use_container_width=True, hide_index=True)
+    st.dataframe(taux_modalites_table(d), width="stretch", hide_index=True)
     st.caption("**Interprétation 7.2** : `cp = asymptomatic` **79,0 %** de malades contre **13,9 %** pour `atypical angina` · `exang = True` **83,6 %** contre 36,4 % · `thal` anormal **76–80 %** contre 29,6 % si `normal` · `slope` flat/downsloping **~77 %** contre 38,4 % en upsloping · homme **63,2 %** contre femme 25,9 % · `fbs` 68,1 % contre 49,0 % · `restecg` 51,5–65,7 %. Ces taux sont **descriptifs** : ils mélangent les 4 centres et ne prouvent pas un effet propre (c'est la Phase 15 qui départage les contributions). Aucun coefficient n'est calculé sur une catégorie.")
 
-    st.info("**Pourquoi pas de coefficient sur les catégories ?** Un coefficient compare des écarts entre nombres ; une catégorie n'en a pas. On lit donc des proportions, et l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` +0,064 d'AUC, `chol` 0,035, `oldpeak` 0,027.")
+    st.info("**Pourquoi pas de coefficient sur les catégories ?** Un coefficient compare des écarts entre nombres ; une catégorie n'en a pas. On lit donc des proportions, et l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` 0,061 d'AUC, `chol` 0,031, `oldpeak` 0,026.")
 
     # --- Phase 8 ---
     st.subheader("Phase 8 — Séparation Train / Test (avant tout apprentissage)")
@@ -756,8 +767,8 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.markdown("""
 - **Préparation identique** pour tous (même `Pipeline`), **même validation croisée 5-fold**.
 - **Baseline** (`DummyClassifier`) : prédit toujours la classe majoritaire (55 %) — tout modèle doit faire nettement mieux.
-- **Critère de choix** : l'**AUC** (classement indépendant du seuil) complétée par le **rappel** (part des malades détectés), prioritaire en dépistage.
-- **Phase 11bis** : la même comparaison est rejouée avec 8 familles de modèles (SVM, Naive Bayes, AdaBoost, Gradient Boosting…) pour vérifier qu'aucune n'est meilleure.
+- **Critère de choix** : l'**AUC** (classement indépendant du seuil) complétée par le **rappel** (part des malades détectés), prioritaire ici.
+- **Phase 11.2** : la même comparaison est rejouée avec 8 familles de modèles (SVM, Naive Bayes, AdaBoost, Gradient Boosting…) pour vérifier qu'aucune n'est meilleure.
 """)
     show_table([
         ("Régression logistique (retenue)", 0.883, 0.852),
@@ -780,17 +791,17 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 | **MSE** | Erreur quadratique moyenne | pénalise les grosses erreurs | **0,1067** (0,1522 sur la classe) |
 | **RMSE** | Racine du MSE, même unité que la cible | plus bas = mieux | **0,3267** (0,3901 sur la classe) |
 | **R²** | Part de variance expliquée | 1 bon, 0 naïf, <0 mauvais | **0,5680** sur la probabilité (0,3840 sur la classe) |
-| **Recall** | Vrais malades détectés / vrais malades | proche 1 = peu de malades manqués | **prioritaire en pré-dépistage** |
+| **Recall** | Vrais malades détectés / vrais malades | proche 1 = peu de malades manqués | **prioritaire ici** |
 | **Precision** | Vrais malades parmi les prédits malades | proche 1 = peu de fausses alertes | compromis avec le rappel |
 | **AUC** | Séparation sain/malade tous seuils | 0.5 hasard, 1 parfait | mesure globale |
 
-**Pourquoi le rappel est prioritaire ?** Un faux négatif = malade non détecté, risque grave. On accepte plus de fausses alertes en pré-dépistage.
+**Pourquoi le rappel est prioritaire ?** Un faux négatif = malade non détecté, risque grave. On accepte plus de fausses alertes pour en manquer moins.
 
-**Rappel ou R² ?** C'est le **rappel** qui pilote la décision : un faux négatif coûte un malade non dépisté, alors que le R² traite symétriquement un malade manqué et une fausse alerte, et reste borné en classification binaire (0,568 ici). Le R², le MAE, le MSE et le RMSE servent de **contrôle méthodologique** (exigence VIC, comparaison des modèles, lecture de l'erreur), pas de critère de choix du seuil. Ordre retenu : **rappel → AUC → précision/F1 → R²/MAE/MSE/RMSE**.
+**Rappel ou R² ?** C'est le **rappel** qui pilote la décision : un faux négatif coûte un malade non détecté, alors que le R² traite symétriquement un malade manqué et une fausse alerte, et reste borné en classification binaire (0,568 ici). Le R², le MAE, le MSE et le RMSE servent de **contrôle méthodologique** (exigence VIC, comparaison des modèles, lecture de l'erreur), pas de critère de choix du seuil. Ordre retenu : **rappel → AUC → précision/F1 → R²/MAE/MSE/RMSE**.
 """)
     with st.spinner("Recalcul des métriques sur le jeu test…"):
         _fitted, cmp_metrics, _cms = train_compare_models()
-    st.dataframe(cmp_metrics.round(3), use_container_width=True)
+    st.dataframe(cmp_metrics.round(3), width="stretch")
     st.caption("Recalculé en direct par l'application, avec le même split et la même graine que le notebook (80/20 stratifié, `random_state=42`, seuil par défaut 0,50).")
 
     st.markdown("**Matrice de confusion des 3 modèles comparés (seuil 0,50)**")
@@ -799,7 +810,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
         tn, fp, fn, tp = cm.ravel()
         cm_rows.append({"Modèle": name, "TN (sain→sain)": int(tn), "FP (sain→malade)": int(fp),
                         "FN (malade→sain)": int(fn), "TP (malade→malade)": int(tp)})
-    st.dataframe(pd.DataFrame(cm_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(cm_rows), width="stretch", hide_index=True)
     st.caption("**Interprétation** : sur 184 patients (82 sains, 102 malades), la régression logistique détecte 92 malades sur 102 (**rappel 0,902**) en alertant à tort 18 sains (**précision 0,836**) ; Random Forest et KNN en détectent 89 (0,873) avec respectivement 18 et 14 fausses alertes. Les **FN** sont l'erreur critique : ce sont eux que le seuil abaissé à 0,41 fait passer de 10 à 8. Le R² (0,568 sur la probabilité) résume la qualité d'ensemble mais ne dit pas combien de malades ont été manqués : c'est pourquoi la décision se lit avec la matrice + le rappel.")
 
     # --- Phase 13 ---
@@ -810,7 +821,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
     st.markdown("""
 - Le seuil transforme une **probabilité** en **décision**. 0,50 n'est qu'une convention.
 - Ici, le seuil est **calculé sur des probabilités out-of-fold du train** pour garantir un **rappel ≥ 90 %**, puis appliqué une seule fois au test.
-- Conséquence : moins de malades manqués (**faux négatifs** ↓), plus de fausses alertes (**faux positifs** ↑) — compromis acceptable en pré-dépistage, puisqu'une alerte mène à un contrôle médical.
+- Conséquence : moins de malades manqués (**faux négatifs** ↓), plus de fausses alertes (**faux positifs** ↑) — compromis assumé, puisqu'une alerte mène à un examen.
 """)
 
     # --- Phase 14 ---
@@ -893,7 +904,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
 - **Q3 — Capacité prédictive** : AUC test **0,927** (CV 0,883), accuracy **0,848**, rappel 0,902 (baseline 0,55).
 - **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864) et arbre seul (0,804) ; aucune des 8 familles testées ne fait mieux.
 - **Q4bis — Valeurs manquantes** : **KNN et médiane/mode se valent** sur les critères du projet (rappel identique 0,902 → 10 FN ; R² **0,5743 KNN** contre 0,5680 ; CV R² 0,4696 contre 0,4554 ; AUC 0,9249 contre 0,9267). IC bootstrap contenant 0 → pas de gagnant démontré. La médiane/mode reste **livrée** pour sa simplicité et la transparence de ses valeurs ; le KNN est pénalisé par sa moyenne de codes sur `thal` (50,9 % de `fixed defect` contre 10,9 % en réel). Suppression derrière (rappel 0,8922, 11 FN).
-- **Q5 — Fiabilité** : rappel 0,90 au seuil 0,50 (10 faux négatifs / 102 malades, 18 faux positifs / 82 sains) et **0,92 au seuil 0,41** (8 faux négatifs, 23 faux positifs) ; **aide à la décision, jamais un diagnostic**.
+- **Q5 — Fiabilité** : rappel 0,90 au seuil 0,50 (10 faux négatifs / 102 malades, 18 faux positifs / 82 sains) et **0,92 au seuil 0,41** (8 faux négatifs, 23 faux positifs) ; **aide à la décision, avec validation humaine**.
 - **Limites** : 918 patients (920 lignes brutes − 2 doublons exacts), 4 centres, `ca`/`thal` très incomplètes, données rétrospectives. **Perspectives** : validation externe, calibration des probabilités, suivi de dérive du modèle.
 """)
     st.caption("Le détail complet (sorties, figures, interprétations) se trouve dans le notebook, page « 4. Notebook (prioritaire) ».")
@@ -902,8 +913,8 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
     v1, v2, v3 = st.columns(3)
     v1.metric("Modèle retenu", "Rég. logistique", "AUC test 0,927")
     v2.metric("Valeurs manquantes", "Médiane / mode", "équivalent KNN (R² 0,568 vs 0,574)")
-    v3.metric("Seuil de dépistage", f"{float(meta['seuil']):.2f}".replace(".", ","), "rappel 0,92 — 8 FN / 102")
-    st.success("**Verdict** : régression logistique + imputation médiane/mode + seuil abaissé à 0,41. Sur 102 malades du test, **94 sont détectés et 8 manqués** ; sur 82 sains, 59 sont rassurés à juste titre et 23 reçoivent une fausse alerte. C'est le meilleur compromis de pré-dépistage, et le plus explicable cliniquement.")
+    v3.metric("Seuil de décision", f"{float(meta['seuil']):.2f}".replace(".", ","), "rappel 0,92 — 8 FN / 102")
+    st.success("**Verdict** : régression logistique + imputation médiane/mode + seuil abaissé à 0,41. Sur 102 malades du test, **94 sont détectés et 8 manqués** ; sur 82 sains, 59 sont rassurés à juste titre et 23 reçoivent une fausse alerte. C'est le meilleur compromis du projet, et le plus explicable cliniquement.")
 
     st.markdown("**Matrice de confusion réelle (test : 184 patients = 82 sains + 102 malades)**")
     st.dataframe(pd.DataFrame([
@@ -911,8 +922,8 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
          "Accuracy": 0.848, "Rappel": 0.902, "Spécificité": 0.780, "Précision": 0.836},
         {"Seuil": "0,41 (retenu)", "TN (sain→sain)": 59, "FP (sain→malade)": 23, "FN (malade→sain)": 8, "TP (malade→malade)": 94,
          "Accuracy": 0.832, "Rappel": 0.922, "Spécificité": 0.720, "Précision": 0.803},
-    ]), use_container_width=True, hide_index=True)
-    st.caption("**Lecture** : abaisser le seuil de 0,50 à 0,41 échange **2 malades manqués** (10 → 8) contre **5 fausses alertes** (18 → 23). En pré-dépistage c'est le bon sens : un FN rentre chez lui non dépisté, un FP passe un examen inutile. **TP+TN = 153/184** décisions correctes au seuil retenu ; **VPN = 0,881** (quand le modèle dit « sain », il a raison ~88 % du temps).")
+    ]), width="stretch", hide_index=True)
+    st.caption("**Lecture** : abaisser le seuil de 0,50 à 0,41 échange **2 malades manqués** (10 → 8) contre **5 fausses alertes** (18 → 23). Le choix est assumé : un FN rentre chez lui non détecté, un FP passe un examen inutile. **TP+TN = 153/184** décisions correctes au seuil retenu ; **VPN = 0,881** (quand le modèle dit « sain », il a raison ~88 % du temps).")
 
     st.markdown("**Métriques d'erreur et R² : ce qu'elles disent vraiment**")
     st.dataframe(pd.DataFrame([
@@ -920,7 +931,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
         {"Métrique": "MSE", "Probabilité": 0.1067, "Classe 0/1": 0.1522, "Lecture": "pénalise les erreurs confiantes"},
         {"Métrique": "RMSE", "Probabilité": 0.3267, "Classe 0/1": 0.3901, "Lecture": "même unité qu'une probabilité, donc lisible"},
         {"Métrique": "R²", "Probabilité": 0.5680, "Classe 0/1": 0.3840, "Lecture": "57 % de la variance des étiquettes expliquée"},
-    ]), use_container_width=True, hide_index=True)
+    ]), width="stretch", hide_index=True)
     st.info("**R² = 0,568** : la cible est binaire, donc un R² ne peut pas approcher 1 ; 0,568 est **élevé** pour une classification (plafond pratique ≈ 0,6), et il prouve que le modèle fait bien mieux qu'un pronostic constant (R² = 0). Sur la classe prédite, MAE = MSE = 0,1522 = le taux d'erreur. Mais le R² **ne dit pas combien de malades ont été manqués** : il pèse un FN et un FP à égalité. D'où l'ordre de lecture retenu : **rappel → AUC → précision/F1 → R²/MAE/MSE/RMSE**.")
     st.markdown("**Pourquoi ces choix** : régression logistique = meilleure AUC CV (0,883) et test (0,927), 8 FN au lieu de 13 au seuil retenu. Pour les manquants, **KNN et médiane/mode sont équivalents** (rappel identique, R² 0,5743 vs 0,5680, IC contenant 0) : la médiane est livrée pour sa **simplicité et la transparence de ses valeurs** (`ca = 0` explicite, indicateur de manquant), et parce que le KNN **moyenne des codes** sur `thal` (50,9 % de `fixed defect` contre 10,9 % en réel). La suppression est écartée : rappel 0,8922 (11 FN) et deux examens jetés.")
 
@@ -950,18 +961,17 @@ elif page.startswith("3"):
     st.header("3) Prédiction / Verdict final (formulaire)")
     st.markdown("Saisir les données patient. Les 3 modèles comparent la même entrée. **Aide à la décision, pas décision automatique.**")
     st.markdown("""
-**Quels champs font vraiment bouger le verdict ?** (association mesurée dans la Phase 7.4)
+**Quels champs font vraiment bouger le verdict ?** (importance par permutation, Phase 15)
 
-| Force | Variables | Ce que ça veut dire en démo |
+| Force | Variables (baisse d'AUC) | Ce que ça veut dire en démo |
 |---|---|---|
-| **Très forte** | `cp` (+0,064 d'AUC) | changer ce seul champ fait basculer le verdict |
-| **Forte** | `chol` (+0,035) · `oldpeak` (+0,027) | effet net sur la probabilité |
-| Moyenne | `thal` · `ca` · `sex` · `exang` · `trestbps` · `thalch` | effet mesurable mais progressif |
-| Faible | `fbs` · `age` · `slope` · `restecg` | bouger ces champs seuls change peu la probabilité |
-| Modérée | `thalch` (0,393) · `oldpeak` (0,386) · `slope` (0,377) · `sex` (0,304) · `age` (0,282) | effet net mais plus progressif |
-| Faible | `fbs` (0,139) · `chol` (0,119) · `trestbps` (0,115) · `restecg` (0,100) | bouger ces champs seuls change **peu** la probabilité (mais ils comptent dans le modèle) |
+| **Très forte** | `cp` (0,061) | changer ce seul champ fait basculer le verdict |
+| **Forte** | `chol` (0,031) · `oldpeak` (0,026) | effet net sur la probabilité |
+| Moyenne | `ca` (0,015) · `exang` (0,014) · `thal` (0,013) · `sex` (0,012) | effet mesurable mais progressif |
+| Faible | `trestbps` (0,003) · `fbs` (0,002) | bouger ces champs seuls change peu la probabilité |
+| Négligeable | `age` (0,000) · `thalch` (0,000) · `slope` (−0,003) · `restecg` (−0,003) | information déjà portée par les autres variables, ou bruit |
 
-Le chiffre entre parenthèses = **importance par permutation** (Phase 15) : baisse d'AUC du modèle quand on mélange la variable. C'est la mesure de l'effet réel dans le modèle.
+Le chiffre entre parenthèses = **importance par permutation** : baisse d'AUC du modèle quand on mélange la variable. C'est la mesure de l'effet réel **dans le modèle** ; la corrélation de Pearson (Phase 7) mesure, elle, un lien isolé.
 """)
 
     with st.expander("Voir la fonction simple predire_scenario (style demandé, adapté CardioRisk binaire)"):
@@ -1023,14 +1033,14 @@ for nom, vals in SCENARIOS.items():
                 if f"c_{col}" not in st.session_state:
                     kw["index"] = 0
                 patient[col] = st.selectbox(label, **kw)
-        envoyer = st.form_submit_button("Prédire / Comparer les 3 modèles", use_container_width=True)
+        envoyer = st.form_submit_button("Prédire / Comparer les 3 modèles", width="stretch")
 
     if envoyer:
         X = pd.DataFrame([patient])
         seuil = float(meta["seuil"])
         errors, warns = validate_patient_inputs(patient)
         st.markdown("### Données saisies")
-        st.dataframe(X, use_container_width=True)
+        st.dataframe(X, width="stretch")
         for w in warns: st.warning(w)
         if errors:
             for e in errors: st.error(e)
@@ -1043,14 +1053,14 @@ for nom, vals in SCENARIOS.items():
             pred_i = int(prob >= seuil)
             rows.append({"Modèle": name, "Probabilité malade %": round(prob*100,2), "Seuil %": round(seuil*100,2), "Prédiction": "Malade (1)" if pred_i else "Sain (0)", "Verdict": "⚠️ Risque élevé" if pred_i else "✅ Risque faible"})
         st.markdown("### Comparaison des 3 modèles (mêmes données formulaire)")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
         st.markdown("### Matrice de confusion + métriques par modèle (même jeu de test)")
-        st.dataframe(cmp_metrics.style.format({"Accuracy":"{:.2%}","Précision":"{:.2%}","Rappel":"{:.2%}","F1":"{:.4f}","AUC":"{:.2%}","FN":"{:.0f}","FP":"{:.0f}"}), use_container_width=True)
+        st.dataframe(cmp_metrics.style.format({"Accuracy":"{:.2%}","Précision":"{:.2%}","Rappel":"{:.2%}","F1":"{:.4f}","AUC":"{:.2%}","FN":"{:.0f}","FP":"{:.0f}"}), width="stretch")
         best_global = cmp_metrics.sort_values(["Accuracy","Précision","F1"], ascending=False).index[0]
         best_recall = cmp_metrics["Rappel"].idxmax()
         st.success(f"**Meilleur performance globale (Accuracy/Précision/F1)** : **{best_global}** — Accuracy={cmp_metrics.loc[best_global,'Accuracy']:.2%}, Précision={cmp_metrics.loc[best_global,'Précision']:.2%}, F1={cmp_metrics.loc[best_global,'F1']:.4f}, FP={int(cmp_metrics.loc[best_global,'FP'])}. Moins de fausses alertes/erreurs globales, mais pas forcément le plus de malades détectés.")
-        st.info(f"**Meilleur en pré-dépistage (priorité Rappel/FN)** : **{best_recall}** — Rappel={cmp_metrics.loc[best_recall,'Rappel']:.2%}, FN={int(cmp_metrics.loc[best_recall,'FN'])}, FP={int(cmp_metrics.loc[best_recall,'FP'])}. Manquer un malade (FN) est critique.")
+        st.info(f"**Meilleur sur le critère Rappel/FN** : **{best_recall}** — Rappel={cmp_metrics.loc[best_recall,'Rappel']:.2%}, FN={int(cmp_metrics.loc[best_recall,'FN'])}, FP={int(cmp_metrics.loc[best_recall,'FP'])}. Manquer un malade (FN) est critique.")
         with st.expander("Quel est le meilleur modèle ? (interprétation vérifiée)"):
             st.markdown("""
 **La régression logistique est le meilleur modèle du projet** : meilleure AUC en validation croisée (0,883) **et** sur le test (0,927), et elle est la plus explicable (un coefficient par variable).
@@ -1067,7 +1077,7 @@ for nom, vals in SCENARIOS.items():
 - **FP (faux positif)** : sain prédit malade → fausse alerte, coût de temps seulement.
 - Au **seuil retenu (0,41)**, la régression logistique ne manque que **8 malades sur 102** (contre 10 au seuil 0,50).
 
-**KNN gagne sur l'accuracy et la précision** (0,853 / 0,864 contre 0,848 / 0,836) avec moins de fausses alertes, **mais il détecte moins de malades et classe moins bien les probabilités (AUC 0,898)**. En pré-dépistage, ce compromis n'est pas acceptable.
+**KNN gagne sur l'accuracy et la précision** (0,853 / 0,864 contre 0,848 / 0,836) avec moins de fausses alertes, **mais il détecte moins de malades et classe moins bien les probabilités (AUC 0,898)**. Ici, ce compromis n'est pas acceptable.
 
 > **Conclusion** : régression logistique = **le meilleur modèle** (AUC test, rappel, explicabilité). Un modèle qui rate moins de malades et se laisse auditer cliniquement prime sur quelques points d'accuracy.
 """)
@@ -1091,7 +1101,7 @@ for nom, vals in SCENARIOS.items():
 | **Haut droite** | Réel Malade (1), au-dessus ligne rouge | **Vrai positif (TP)**, vert | Malade bien détecté. |
 | **Bas droite** | Réel Malade (1), sous ligne rouge | **Faux négatif (FN)**, rouge | Malade prédit sain = malade manqué (critique). |
 
-**Couleurs** : vert = correct, orange = FP, rouge = FN. Les points rouges en bas à droite sont les plus critiques en pré-dépistage.
+**Couleurs** : vert = correct, orange = FP, rouge = FN. Les points rouges en bas à droite sont les plus critiques ici.
 """)
 
         with st.expander("Comparaison 3 stratégies valeurs manquantes (ca, thal) — même RandomForest final"):
@@ -1213,7 +1223,7 @@ for nom, vals in SCENARIOS.items():
                 }).T.round(4)
             try:
                 cmp_na = compare_missing_strategies()
-                st.dataframe(cmp_na, use_container_width=True)
+                st.dataframe(cmp_na, width="stretch")
                 best_na = cmp_na['ROC-AUC'].astype(float).idxmax()
                 st.success(f"**Meilleure stratégie selon ROC-AUC test** : {best_na}. (Même split, même RandomForest, CV 5-fold ; imputation KNN refaite dans chaque pli)")
             except Exception as e:
@@ -1280,7 +1290,7 @@ for nom, vals in SCENARIOS.items():
         c1, c2 = st.columns([3, 2])
         with c1:
             st.markdown(f"**{titre}**")
-            st.dataframe(row.T.astype(str).rename(columns={0: "Valeur"}), use_container_width=True)
+            st.dataframe(row.T.astype(str).rename(columns={0: "Valeur"}), width="stretch")
         with c2:
             st.metric("Probabilité de maladie", f"{p:.1%}")
             if p >= float(meta["seuil"]):
@@ -1307,7 +1317,7 @@ Cette page **présente le travail tel qu'il sera défendu**, point par point, av
 
     st.markdown("### 1. Contexte, objectifs et domaine")
     st.markdown("""
-- **Problème** : pré-dépistage cardiaque — prioriser les patients à examiner plus en détail, **pas un diagnostic**.
+- **Problème** : estimation du risque coronarien — prioriser les patients à examiner, **sans poser de diagnostic**.
 - **Objectif** : prédire la présence d'une maladie cardiaque (`target = 1 si num > 0`) à partir de 13 variables cliniques.
 - **Valeur ajoutée** : un outil qui **ne rate pas les malades** (rappel élevé) et qui explique **pourquoi** (coefficient par variable).
 """)
@@ -1336,7 +1346,7 @@ Cette page **présente le travail tel qu'il sera défendu**, point par point, av
     st.markdown("### 8. Justification du modèle")
     st.markdown("""
 - **Régression logistique** : meilleure AUC en validation croisée (**0,883**) et sur le test (**0,927**), **8 malades manqués** au lieu de 13, et un **coefficient par variable** donc un discours clinique possible.
-- Comparé à 7 autres (Random Forest, KNN, arbre, SVM, Naïve Bayes, …) : voir la page 2 / Phase 11bis.
+- Comparé à 7 autres (Random Forest, KNN, arbre, SVM, Naïve Bayes, …) : voir la page 2 / Phase 11.2.
 - **Seuil** : 0,41 (calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %), au lieu de 0,50 par convention. Effet : 2 malades détectés en plus, 5 fausses alertes en plus.
 """)
 
@@ -1349,15 +1359,15 @@ Cette page **présente le travail tel qu'il sera défendu**, point par point, av
     tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
     c71, c72 = st.columns(2)
     with c71:
-        st.dataframe(tc.rename("r avec target").to_frame(), use_container_width=True)
+        st.dataframe(tc.rename("r avec target").to_frame(), width="stretch")
     with c72:
         corr_num = corr.drop(index="target", errors="ignore").drop(columns="target", errors="ignore")
         pairs = corr_num.where(np.triu(np.ones(corr_num.shape, dtype=bool), k=1)).stack()
         pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(6)
-        st.dataframe(pairs.rename("r (entre features)").to_frame(), use_container_width=True)
+        st.dataframe(pairs.rename("r (entre features)").to_frame(), width="stretch")
     st.caption("**Interprétation 7.1 (Pearson)** : avec la maladie, `ca` **+0,456** (309 patients), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, puis `chol` 0,119 et `trestbps` 0,115. Entre variables, `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282 — **aucune paire ne dépasse |r| = 0,40**, donc pas de redondance. `age` est au centre de 4 paires : facteur de confusion classique.")
-    st.dataframe(taux_modalites_table(d), use_container_width=True, hide_index=True)
-    st.caption("**Interprétation 7.2 (taux de malades)** : `cp = asymptomatic` **79,0 %** contre 13,9 % en atypical · `exang = True` **83,6 %** contre 36,4 % · `thal` anormal **76–80 %** contre 29,6 % si normal · `slope` flat/downsloping **~77 %** contre 38,4 % · homme **63,2 %** contre femme 25,9 %. Ces taux sont descriptifs (mélange des 4 centres) ; l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` +0,064 d'AUC, `chol` 0,035, `oldpeak` 0,027.")
+    st.dataframe(taux_modalites_table(d), width="stretch", hide_index=True)
+    st.caption("**Interprétation 7.2 (taux de malades)** : `cp = asymptomatic` **79,0 %** contre 13,9 % en atypical · `exang = True` **83,6 %** contre 36,4 % · `thal` anormal **76–80 %** contre 29,6 % si normal · `slope` flat/downsloping **~77 %** contre 38,4 % · homme **63,2 %** contre femme 25,9 %. Ces taux sont descriptifs (mélange des 4 centres) ; l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` 0,061 d'AUC, `chol` 0,031, `oldpeak` 0,026.")
     st.info("**Si le prof demande « pourquoi pas juste Pearson ? »** : la même variable `cp` donne −0,39, +0,47 ou −0,54 selon l'ordre de numérotation. Un coefficient qui change de signe quand on renumérote ne mesure pas la maladie : il mesure le codage. **Pourquoi pas de One-Hot avant ?** : l'encodeur apprendrait des modalités du test (fuite), écraserait les coefficients et créerait de fausses corrélations. Le One-Hot est fait **après le split, dans le pipeline**.")
 
     st.markdown("### 10. Résultats et indicateurs de performance")
@@ -1376,7 +1386,7 @@ Cette page **présente le travail tel qu'il sera défendu**, point par point, av
 | RMSE | 0,3267 | racine de la MSE |
 """)
     st.markdown("**Matrice de confusion (seuil 0,50)** : TP = 92 · TN = 64 · FP = 18 · FN = 10. Au seuil 0,41 : TP = 94 · TN = 59 · FP = 23 · FN = 8.")
-    st.info("**À dire** : l'AUC dit si le modèle **classe** bien ; le rappel dit **combien de malades il rate** ; le R² dit **quelle part de l'information il capte**. En pré-dépistage, l'ordre de priorité est rappel → AUC → précision → R².")
+    st.info("**À dire** : l'AUC dit si le modèle **classe** bien ; le rappel dit **combien de malades il rate** ; le R² dit **quelle part de l'information il capte**. Ici, l'ordre de priorité est rappel → AUC → précision → R².")
 
     st.markdown("### 11. R², MAE, MSE — explication")
     st.markdown("""
