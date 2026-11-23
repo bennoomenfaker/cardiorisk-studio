@@ -768,7 +768,7 @@ X[NUM] = StandardScaler().fit_transform(X[NUM])""", language="python")
 - **Préparation identique** pour tous (même `Pipeline`), **même validation croisée 5-fold**.
 - **Baseline** (`DummyClassifier`) : prédit toujours la classe majoritaire (55 %) — tout modèle doit faire nettement mieux.
 - **Critère de choix** : l'**AUC** (classement indépendant du seuil) complétée par le **rappel** (part des malades détectés), prioritaire ici.
-- **Phase 11.2** : la même comparaison est rejouée avec 8 familles de modèles (SVM, Naive Bayes, AdaBoost, Gradient Boosting…) pour vérifier qu'aucune n'est meilleure.
+- **Comparaison** : baseline, régression logistique, arbre, KNN et Random Forest sont comparés sur le même split ; la régression logistique obtient la meilleure AUC.
 """)
     show_table([
         ("Régression logistique (retenue)", 0.883, 0.852),
@@ -902,7 +902,7 @@ Le KNN garde un meilleur rappel au seuil 0,50 mais passe derrière sur la discri
 - **Q1 — Facteurs associés** (Phase 7) : côté **numériques** (Pearson) `ca` **+0,456** (309 patients), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, `chol` 0,119, `trestbps` 0,115. Côté **catégories**, taux de malades : `cp = asymptomatic` **79,0 %** contre 13,9 % en atypical, `exang = True` 83,6 %, `thal` anormal ~76–80 % contre 29,6 % si normal, `slope` flat/downsloping ~77 % contre 38,4 %, homme 63,2 % contre femme 25,9 %. Aucun coefficient n'est calculé sur une catégorie.
 - **Q2 — Variables les plus contributives** (permutation) : `cp` très loin devant, puis `chol`, `oldpeak`, `ca`, `exang`. `age` et `thalch` ressortent à ≈ 0 (information déjà portée par les autres variables).
 - **Q3 — Capacité prédictive** : AUC test **0,927** (CV 0,883), accuracy **0,848**, rappel 0,902 (baseline 0,55).
-- **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864) et arbre seul (0,804) ; aucune des 8 familles testées ne fait mieux.
+- **Q4 — Modèle retenu** : régression logistique (AUC CV 0,883), devant Random Forest (0,876), KNN (0,864), arbre (0,804) et baseline (0,500).
 - **Q4bis — Valeurs manquantes** : **KNN et médiane/mode se valent** sur les critères du projet (rappel identique 0,902 → 10 FN ; R² **0,5743 KNN** contre 0,5680 ; CV R² 0,4696 contre 0,4554 ; AUC 0,9249 contre 0,9267). IC bootstrap contenant 0 → pas de gagnant démontré. La médiane/mode reste **livrée** pour sa simplicité et la transparence de ses valeurs ; le KNN est pénalisé par sa moyenne de codes sur `thal` (50,9 % de `fixed defect` contre 10,9 % en réel). Suppression derrière (rappel 0,8922, 11 FN).
 - **Q5 — Fiabilité** : rappel 0,90 au seuil 0,50 (10 faux négatifs / 102 malades, 18 faux positifs / 82 sains) et **0,92 au seuil 0,41** (8 faux négatifs, 23 faux positifs) ; **aide à la décision, avec validation humaine**.
 - **Limites** : 918 patients (920 lignes brutes − 2 doublons exacts), 4 centres, `ca`/`thal` très incomplètes, données rétrospectives. **Perspectives** : validation externe, calibration des probabilités, suivi de dérive du modèle.
@@ -1309,116 +1309,199 @@ elif page.startswith("4"):
     render_notebook(NOTEBOOK_PRIORITY)
 
 else:
-    st.header("5) Soutenance VIC — présentation du projet (12 points du prof)")
+    st.header("5) Soutenance VIC — présentation du projet")
     d = clean_data()
+    st.caption("Page de soutenance : contenu structuré selon les 12 points demandés, avec les résultats réels du notebook et du modèle exporté.")
+
+    st.markdown("## 1. Contexte général, objectif et domaine")
     st.markdown("""
-Cette page **présente le travail tel qu'il sera défendu**, point par point, avec les **vrais résultats** de l'implémentation, des tableaux et des graphiques interprétés. Chaque nombre vient de `model.joblib` / `model_meta.json` et du notebook CardioRisk.
+- **Contexte** : les maladies coronariennes sont une cause majeure de mortalité. Des variables cliniques simples (âge, pression, cholestérol, ECG, douleur thoracique…) sont disponibles avant un examen lourd.
+- **Objectif** : estimer la **probabilité** qu'un patient présente une maladie coronarienne (`target = 1 si num > 0`, sinon `0`) à partir de **13 variables**.
+- **Domaine** : santé / aide à la décision / classification binaire supervisée.
+- **Usage** : aide à la priorisation des examens. Le modèle ne remplace pas un avis médical.
 """)
 
-    st.markdown("### 1. Contexte, objectifs et domaine")
+    st.markdown("## 2. Solutions et travaux existants")
     st.markdown("""
-- **Problème** : estimation du risque coronarien — prioriser les patients à examiner, **sans poser de diagnostic**.
-- **Objectif** : prédire la présence d'une maladie cardiaque (`target = 1 si num > 0`) à partir de 13 variables cliniques.
-- **Valeur ajoutée** : un outil qui **ne rate pas les malades** (rappel élevé) et qui explique **pourquoi** (coefficient par variable).
+Sur le jeu UCI Heart Disease, les travaux courants utilisent la régression logistique, KNN, arbres, Random Forest, SVM ou Gradient Boosting. Les notebooks publics comparent souvent plusieurs modèles et affichent une accuracy ou une matrice de confusion.
 """)
 
-    st.markdown("### 2 & 3. Solutions existantes et leurs limites")
+    st.markdown("## 3. Limites des solutions actuelles")
     st.markdown("""
-- Travaux publiés sur le même jeu **UCI (Cleveland, 4 centres)** analysés.
-- **Limites corrigées** : `LabelEncoder` sur des nominales (faux ordre), suppression de lignes (perte d'information), pas de vrai test (fuite), aucune étude d'association.
-- **Corrections apportées** : One-Hot après le split, test de 184 patients jamais vus, étude d'association (Pearson + taux de malades).
+| Limite fréquente | Pourquoi c'est un problème | Choix dans CardioRisk |
+|---|---|---|
+| Imputation/encodage fait avant le split | **Fuite de données** : le test influence le prétraitement | Pipeline scikit-learn ajusté sur `X_train` uniquement |
+| `LabelEncoder` sur des catégories nominales | Crée un faux ordre (`cp=3 > cp=1`) | `OneHotEncoder` après le split, dans le pipeline |
+| Accuracy seule | Cache les malades manqués | Rappel, matrice de confusion, AUC, R²/MAE/MSE/RMSE |
+| Suppression brute des lignes manquantes | Perte d'information (`ca`/`thal` très incomplets) | Comparaison de 3 stratégies d'imputation |
 """)
 
-    st.markdown("### 4. Formulation du problème")
-    st.markdown("- **Classification binaire** : `target = 1 si num > 0`. **13 variables** explicatives (6 numériques + 7 catégorielles). **Split** : 734 patients train / 184 test.")
-
-    st.markdown("### 5 & 6. Approche et schéma global")
-    st.markdown("CSV → nettoyage → `train_test_split` → pipeline (imputation + scaling + one-hot) → modèle → seuil piloté par le rappel → application Streamlit. Voir la **page 2** pour la table des 18 phases.")
-
-    st.markdown("### 7. Données et prétraitement")
+    st.markdown("## 4. Formulation du problème")
     st.markdown("""
-- **920 lignes brutes → 918 patients** après suppression de 2 doublons exacts ; **13 variables** ; 4 centres (Cleveland, Hungary, Switzerland, VA).
-- **Valeurs manquantes** : `ca` (66 %), `thal` (53 %), `slope` (34 %), `chol` (3 %), `trestbps` (1 %).
-- **Imputation** : médiane (numériques) et mode (catégorielles), **apprises sur le train seulement** ; alternative « patient similaire (KNN) » testée et jugée **équivalente**.
-- **Zéros biologiquement impossibles** (`chol`, `trestbps`) → `NaN` avant imputation.
+- **Entrée** : 13 variables cliniques (6 numériques + 7 catégorielles).
+- **Sortie** : probabilité `P(malade)` puis classe binaire selon un seuil.
+- **Question** : peut-on classer correctement les patients et limiter le nombre de malades manqués ?
 """)
 
-    st.markdown("### 8. Justification du modèle")
+    st.markdown("## 5. Approche retenue, objectif et valeur ajoutée")
     st.markdown("""
-- **Régression logistique** : meilleure AUC en validation croisée (**0,883**) et sur le test (**0,927**), **8 malades manqués** au lieu de 13, et un **coefficient par variable** donc un discours clinique possible.
-- Comparé à 7 autres (Random Forest, KNN, arbre, SVM, Naïve Bayes, …) : voir la page 2 / Phase 11.2.
-- **Seuil** : 0,41 (calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %), au lieu de 0,50 par convention. Effet : 2 malades détectés en plus, 5 fausses alertes en plus.
+- **Approche** : nettoyage → EDA → split stratifié → pipeline de prétraitement → comparaison de modèles → évaluation sur test → seuil orienté rappel → export du modèle.
+- **Modèle retenu** : **Régression logistique** (`max_iter=2000`) dans un pipeline `SimpleImputer + StandardScaler + OneHotEncoder`.
+- **Pourquoi** : meilleure AUC en validation croisée (**0,883**) parmi les modèles testés, AUC test **0,927**, rappel élevé, et coefficients interprétables.
+- **Valeur ajoutée** : décision traçable (probabilité, seuil, matrice de confusion, importance des variables), pas seulement une prédiction brute.
+""")
+    st.info("**Définitions rapides** : *Imputation* = remplacer une valeur manquante par une valeur estimée (médiane, mode, ou KNN). *Fuite de données* = utiliser une information du test pendant l'entraînement/prétraitement. *Pipeline* = enchaînement de traitements appliqué de la même façon en entraînement et en prédiction.")
+
+    st.markdown("## 6. Schéma global, composants et flux de données")
+    st.markdown("""
+```text
+heart_disease_uci.csv (920 lignes)
+        │
+        ▼
+Nettoyage : zéros impossibles -> NaN, suppression id/dataset, doublons, harmonisation catégories
+        │
+        ▼
+EDA : distributions, IQR, Pearson (numériques), taux de malades (catégories)
+        │
+        ▼
+Split stratifié 80/20 : 734 train / 184 test
+        │
+        ▼
+Pipeline (fit sur train) : imputation médiane/mode + StandardScaler + OneHotEncoder
+        │
+        ▼
+Régression logistique -> probabilité -> seuil 0,41 -> classe
+        │
+        ▼
+Évaluation test : matrice confusion, ROC-AUC, R²/MAE/MSE/RMSE, réel vs prédit
+        │
+        ▼
+Export : model.joblib + model_meta.json + Streamlit
+```
 """)
 
-    st.markdown("### 9. Matrice de corrélation interprétée (Pearson + taux de malades)")
+    st.markdown("## 7. Données : origine, description, observations, variables, prétraitement")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Lignes brutes", "920")
+    c2.metric("Après nettoyage", "918")
+    c3.metric("Variables utilisées", "13")
+    c4.metric("Split test", "184")
     st.markdown("""
-**Principe** : il n'y a pas UNE corrélation. **Pearson** exige deux quantités avec une distance qui a un sens (5 ans = 5 ans). Une catégorie (`cp = asymptomatic`) n'a ni ordre ni distance : on **ne calcule aucun coefficient** sur elle, on lit le **pourcentage de malades par modalité**.
+- **Origine** : UCI Heart Disease / Kaggle (Janosi, Steinbrunn, Pfisterer & Detrano, 1989 ; DOI 10.24432/C52P4X, CC BY 4.0).
+- **Centres** : Cleveland, Hungary, Switzerland, VA Long Beach.
+- **Cible** : `target = 1` si `num > 0`, sinon `0`. Répartition : 508 malades / 410 sains.
+- **Prétraitement** : `chol==0` et `trestbps==0` → `NaN` ; suppression `id`, `dataset` ; suppression de 2 doublons ; harmonisation des modalités ; imputation médiane/mode dans le pipeline.
+- **Manquants principaux** : `ca` 66,6 %, `thal` 52,8 %, `slope` 33,6 %.
+""")
+    with st.expander("Aperçu des données nettoyées"):
+        st.dataframe(d.head(10), width="stretch")
+
+    st.markdown("## 8. Choix du modèle, principe et paramètres")
+    st.markdown("""
+| Modèle testé | AUC CV (5 folds) | Rappel CV | Décision |
+|---|---:|---:|---|
+| **Régression logistique** | **0,883** | 0,852 | **Retenu** : meilleur AUC, simple, interprétable |
+| Random Forest | 0,876 | 0,857 | Proche, mais moins interprétable |
+| KNN | 0,864 | 0,847 | Moins bon en AUC |
+| Arbre de décision | 0,804 | 0,786 | Instable, moins performant |
+
+**Principe de la régression logistique** : le modèle calcule une combinaison pondérée des variables, puis la transforme en probabilité entre 0 et 1 par la fonction sigmoïde.
+**Paramètre principal** : `max_iter=2000` (assure la convergence). Le reste du traitement est dans le pipeline (imputation, standardisation, one-hot).
+""")
+
+    st.markdown("## 9. Matrice de corrélation entre variables (interprétation)")
+    st.markdown("""
+**Règle de lecture** : la corrélation de **Pearson** se calcule sur des variables **numériques**.
+- **Avec `target`** : mesurer le lien linéaire des variables numériques avec la maladie (`target` est binaire 0/1, donc numérique).
+- **Sans `target`** : vérifier la redondance entre variables explicatives.
+Les variables **catégorielles** (`cp`, `thal`, `exang`…) ne sont pas mises dans Pearson : on les analyse par **taux de malades par modalité**.
 """)
     fig_corr, corr = correlation_figure(d)
     show_fig(fig_corr)
+    corr_no_target = corr.drop(index="target", columns="target", errors="ignore")
+    fig_nt, ax_nt = plt.subplots(figsize=(7, 5.5))
+    sns.heatmap(corr_no_target, annot=True, fmt=".2f", cmap="coolwarm", vmin=-1, vmax=1, ax=ax_nt)
+    ax_nt.set_title("Pearson — variables numériques SANS target (redondance)")
+    plt.tight_layout()
+    show_fig(fig_nt)
     tc = corr["target"].drop("target").sort_values(key=lambda s: s.abs(), ascending=False)
     c71, c72 = st.columns(2)
     with c71:
-        st.dataframe(tc.rename("r avec target").to_frame(), width="stretch")
+        st.markdown("**Corrélation avec target (Pearson)**")
+        st.dataframe(tc.rename("r").to_frame().round(3), width="stretch")
     with c72:
         corr_num = corr.drop(index="target", errors="ignore").drop(columns="target", errors="ignore")
         pairs = corr_num.where(np.triu(np.ones(corr_num.shape, dtype=bool), k=1)).stack()
-        pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(6)
-        st.dataframe(pairs.rename("r (entre features)").to_frame(), width="stretch")
-    st.caption("**Interprétation 7.1 (Pearson)** : avec la maladie, `ca` **+0,456** (309 patients), `thalch` **−0,393**, `oldpeak` **+0,386**, `age` **+0,282**, puis `chol` 0,119 et `trestbps` 0,115. Entre variables, `age`–`ca` 0,370, `age`–`thalch` −0,365, `oldpeak`–`ca` 0,282 — **aucune paire ne dépasse |r| = 0,40**, donc pas de redondance. `age` est au centre de 4 paires : facteur de confusion classique.")
+        pairs = pairs.reindex(pairs.abs().sort_values(ascending=False).index).head(5)
+        st.markdown("**Paires numériques les plus liées**")
+        st.dataframe(pairs.rename("r").to_frame().round(3), width="stretch")
+    st.caption("Interprétation : `ca` (0,456), `thalch` (-0,393) et `oldpeak` (0,386) sont les numériques les plus liées à `target`. Aucune paire de variables explicatives ne dépasse |r|=0,40 : pas de redondance forte.")
+    st.markdown("**Variables catégorielles : taux de malades par modalité**")
     st.dataframe(taux_modalites_table(d), width="stretch", hide_index=True)
-    st.caption("**Interprétation 7.2 (taux de malades)** : `cp = asymptomatic` **79,0 %** contre 13,9 % en atypical · `exang = True` **83,6 %** contre 36,4 % · `thal` anormal **76–80 %** contre 29,6 % si normal · `slope` flat/downsloping **~77 %** contre 38,4 % · homme **63,2 %** contre femme 25,9 %. Ces taux sont descriptifs (mélange des 4 centres) ; l'importance réelle dans le modèle est mesurée en Phase 15 (permutation) : `cp` 0,061 d'AUC, `chol` 0,031, `oldpeak` 0,026.")
-    st.info("**Si le prof demande « pourquoi pas juste Pearson ? »** : la même variable `cp` donne −0,39, +0,47 ou −0,54 selon l'ordre de numérotation. Un coefficient qui change de signe quand on renumérote ne mesure pas la maladie : il mesure le codage. **Pourquoi pas de One-Hot avant ?** : l'encodeur apprendrait des modalités du test (fuite), écraserait les coefficients et créerait de fausses corrélations. Le One-Hot est fait **après le split, dans le pipeline**.")
+    st.caption("Interprétation : `cp=asymptomatic` (79,0 %), `exang=True` (83,6 %), `thal` anormal (~76–80 %) et `slope=flat/downsloping` (~76–77 %) sont associés à plus de malades. Ce n'est pas un coefficient Pearson, c'est un taux observé.")
 
-    st.markdown("### 10. Résultats et indicateurs de performance")
+    st.markdown("## 10. Résultats et indicateurs de performance")
     st.markdown("""
-| Métrique | Valeur | Lecture |
+| Indicateur | Valeur (test, seuil 0,50) | Interprétation |
 |---|---:|---|
-| **AUC (test)** | **0,9267** | 93 fois sur 100, le modèle donne la proba la plus haute au malade |
-| Accuracy | 0,8478 | 156 bons pronostics sur 184 |
-| Précision | 0,8364 | quand il dit « malade », 84 % le sont vraiment |
-| **Rappel** | **0,9020** | 92 malades sur 102 détectés (94 sur 102 au seuil 0,41) |
-| F1 | 0,8679 | compromis précision/rappel |
-| AUC (validation croisée, 5 plis) | 0,883 | stabilité du modèle |
-| **R²** | **0,5680** | part de la variation des étiquettes (0/1) expliquée |
-| **MAE** | **0,2317** | écart moyen entre proba prédite et réalité (0 ou 1) |
-| **MSE** | **0,1067** | erreur quadratique (pénalise les erreurs confiantes) |
-| RMSE | 0,3267 | racine de la MSE |
+| Accuracy | 0,8478 | 156 / 184 prédictions correctes |
+| Precision | 0,8364 | Quand le modèle prédit malade, il a raison dans 83,6 % des cas |
+| Recall | 0,9020 | 92 / 102 malades détectés |
+| F1 | 0,8679 | Équilibre précision/rappel |
+| ROC-AUC | 0,9267 | Bonne capacité de classement global |
 """)
-    st.markdown("**Matrice de confusion (seuil 0,50)** : TP = 92 · TN = 64 · FP = 18 · FN = 10. Au seuil 0,41 : TP = 94 · TN = 59 · FP = 23 · FN = 8.")
-    st.info("**À dire** : l'AUC dit si le modèle **classe** bien ; le rappel dit **combien de malades il rate** ; le R² dit **quelle part de l'information il capte**. Ici, l'ordre de priorité est rappel → AUC → précision → R².")
+    st.markdown("**Matrice de confusion (seuil 0,50)**")
+    st.dataframe(pd.DataFrame({
+        "": ["Réel sain (0)", "Réel malade (1)"],
+        "Prédit sain (0)": [64, 10],
+        "Prédit malade (1)": [18, 92],
+    }), width="stretch", hide_index=True)
+    st.caption("Lecture : TN=64, FP=18, FN=10, TP=92. L'erreur la plus critique est FN=10 (malades prédits sains).")
+    st.markdown("**Seuil retenu pour la démo : 0,41** (calculé par validation croisée sur le train, sans toucher au test).")
+    st.dataframe(pd.DataFrame({
+        "Seuil": ["0,50", "0,41"],
+        "TN": [64, 59], "FP": [18, 23], "FN": [10, 8], "TP": [92, 94],
+        "Recall": [0.9020, 0.9216], "Precision": [0.8364, 0.8034]
+    }), width="stretch", hide_index=True)
+    st.caption("Interprétation : abaisser le seuil réduit les FN (10 -> 8) mais augmente les FP (18 -> 23). C'est un compromis assumé.")
 
-    st.markdown("### 11. R², MAE, MSE — explication")
+    st.markdown("## 11. Interprétation de R², MAE, MSE")
     st.markdown("""
-- **R² = 0,568** : le modèle explique **56,8 %** de la variation des étiquettes 0/1. Élevé pour du binaire (la cible est soit 0 soit 1, la variance est maximale).
-- **MAE = 0,2317** : en moyenne, la probabilité prédite s'écarte de **0,23** de la réalité (0 ou 1). Plus bas = mieux.
-- **MSE = 0,1067** (RMSE 0,3267) : pénalise les **erreurs confiantes** (une proba de 0,99 sur un sain coûte beaucoup). Complémentaire du MAE.
-- Ces métriques sont calculées **sur les probabilités**, pas sur les classes : elles documentent la **qualité des probabilités**, le rappel pilote la décision.
+Ces métriques sont calculées sur les **probabilités prédites** par rapport à la cible 0/1 sur le test.
+
+| Métrique | Valeur | Formule / sens | Interprétation |
+|---|---:|---|---|
+| **R²** | **0,5680** | 1 - SSE/SST | 56,8 % de la variance de la cible est expliquée. Pour une cible binaire, ce score est correct ; il ne remplace pas le rappel. |
+| **MAE** | **0,2317** | moyenne(|y - p|) | En moyenne, la probabilité s'écarte de 0,23 de la réalité. |
+| **MSE** | **0,1067** | moyenne((y-p)²) | Pénalise plus les grosses erreurs confiantes. |
+| RMSE | 0,3267 | sqrt(MSE) | Erreur typique dans la même échelle que la probabilité. |
 """)
+    st.info("Lecture simple : R² mesure la qualité globale des probabilités, MAE l'erreur moyenne, MSE/RMSE punissent davantage les grandes erreurs. Pour le risque médical, on regarde aussi le rappel et la matrice de confusion.")
 
-    st.markdown("### 12. Tests sur nouvelles données, réel vs prédit, limites")
+    st.markdown("## 12. Test final sur nouvelles données, réel vs prédit, limites, perspectives")
     st.markdown("""
-- **Test** : 184 patients **jamais utilisés** avant l'évaluation finale (phase de test clairement distincte de l'entraînement).
-- **Réel vs prédit** : graphique des probabilités prédites selon la vraie classe (Phase 14 du notebook) + calibration par tranches (0–0,2 → 0,08/0,04 ; 0,2–0,4 → 0,29/0,28 ; 0,4–0,6 → 0,50/0,27 ; 0,6–0,8 → 0,67/0,73 ; 0,8–1 → 0,92/0,95).
-- **Limites** : 918 patients, 4 centres, `ca` connu pour 309 seulement, `thal` pour 434, données rétrospectives, probabilités non calibrées, risque de dérive.
-- **Perspectives** : validation externe, calibration des probabilités, suivi de dérive, collecte de `ca`/`thal`.
+- **Test final** : 184 patients jamais vus pendant l'entraînement. La phase de test est séparée de l'entraînement/validation.
+- **Nouvelles données** : la page Prédiction permet de saisir un patient et d'obtenir `P(malade)`, la classe, et la comparaison de 3 modèles.
+- **Réel vs prédit** : la Phase 14 du notebook montre la probabilité prédite selon la vraie classe ; les points rouges sont les FN (malades prédits sains), les plus critiques.
+- **Limites** : 918 patients, 4 centres hétérogènes, `ca`/`thal` très manquants, données rétrospectives 1988, pas de validation externe.
+- **Perspectives** : validation externe, calibration des probabilités, suivi de dérive, collecte de variables manquantes, étude coût FP/FN avec experts.
 """)
+    st.markdown("**Comparaison réel / prédit (exemples de démonstration)**")
+    demo = pd.DataFrame([
+        {"Profil": "Faible risque", "Réel attendu": "Sain", "P(malade)": "≈ 0,07", "Prédit (seuil 0,41)": "Sain"},
+        {"Profil": "Vigilance", "Réel attendu": "Limite", "P(malade)": "≈ 0,35", "Prédit (seuil 0,41)": "Sain"},
+        {"Profil": "Risque élevé", "Réel attendu": "Malade", "P(malade)": "≈ 0,88", "Prédit (seuil 0,41)": "Malade"},
+    ])
+    st.dataframe(demo, width="stretch", hide_index=True)
 
-    st.markdown("### Les 6 questions que le jury va poser")
+    st.markdown("## Définitions utiles à l'oral")
     st.markdown("""
-1. **« Pourquoi la régression logistique ? »** → meilleure AUC CV (0,883) et test (0,927), 8 malades manqués au lieu de 13, et un coefficient par variable donc un discours clinique possible.
-2. **« Pourquoi le seuil 0,41 et pas 0,50 ? »** → 0,50 est une convention ; 0,41 est calculé sur des probabilités out-of-fold du train pour garantir un rappel ≥ 90 %. Effet : 2 malades détectés en plus, 5 fausses alertes en plus.
-3. **« Comment évitez-vous la fuite de données ? »** → tout ce qui apprend (médiane, mode, scaling, one-hot) est **dans le pipeline**, ajusté sur `X_train` uniquement, refait à chaque pli de la validation croisée.
-4. **« Médiane ou patient similaire (KNN) ? »** → les deux se valent (rappel identique 0,902 ; R² 0,568 vs 0,574 ; IC contenant 0). La médiane est livrée pour sa simplicité ; le KNN moyenne des codes sur `thal`, ce qui produit 51 % de `fixed defect` contre 11 % en réalité.
-5. **« R² ou rappel ? »** → le rappel pilote la décision (un malade manqué coûte plus qu'une fausse alerte) ; le R² documente la qualité des probabilités et répond à l'exigence du cours.
-6. **« Vos résultats sont-ils fiables ? »** → test de 184 patients jamais utilisés, IC bootstrap fournis, et limites explicites (voir ci-dessus).
-""")
-
-    st.markdown("### Trois erreurs à ne pas commettre en soutenance")
-    st.markdown("""
-- **Ne pas dire « j'ai fait une matrice de corrélation »** en montrant la heatmap des 13 variables : dire « trois mesures adaptées à trois types de paires » (Pearson pour les numériques, taux de malades pour les catégories), sinon la question « Pearson sur `cp`, vraiment ? » arrive.
-- **Ne pas confondre accuracy et rappel** : 84,8 % d'accuracy peut cacher des malades manqués. Toujours montrer la matrice de confusion.
-- **Ne pas présenter le test comme un jeu d'entraînement** : le test est utilisé **une seule fois**, à la fin.
+- **Imputation** : remplacement des valeurs manquantes par une estimation (médiane/mode/KNN).
+- **Fuite de données** : le test influence l'entraînement ou le prétraitement ; elle gonfle artificiellement les scores.
+- **Validation croisée** : découper le train en K plis pour estimer la stabilité du modèle ; ici 5 plis stratifiés.
+- **AUC ROC** : capacité du modèle à classer un malade avant un sain, indépendamment du seuil.
+- **Rappel (Recall)** : TP/(TP+FN), proportion de malades détectés. Prioritaire ici car un FN est coûteux.
+- **Matrice de confusion** : tableau TP/TN/FP/FN qui montre les types d'erreurs.
 """)
 
 st.sidebar.markdown("---")
